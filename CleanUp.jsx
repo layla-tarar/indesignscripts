@@ -1,19 +1,24 @@
 // CleanUp.jsx
-// Run AFTER placing the .docx file in InDesign and applying paragraph styles.
+// Run AFTER placing the _text.docx file in InDesign and applying paragraph styles.
 //
 // The following are already handled by extract_tables.py (before placement):
 //   - Bullet character stripping (U+2022)
 //   - Tilde operator (U+223C) → standard tilde
-//   - "Table N." → "Table N:" in description rows
+//   - "Table N." → "Table N:" in table description rows (_text file)
 //   - Superscript/footnote markers wrapped as {{...}}
+//   - Bold stripped from table cells
 //
 // This script handles what remains:
 //   1. Double spaces → single space
 //   2. Consecutive paragraph returns → single return
 //   3. Multiplication sign normalization (digit x Capital → digit × Capital)
-//   4. Superscript {{N}} markers → apply Char_Superscript character style
-//      NOTE: Run this AFTER creating native footnotes for first occurrences (Part A).
-//            If Part A is not done yet, undo step 4 (Cmd+Z), do Part A, then re-run.
+//   4. "Table N." → "Table N:" in Table_Caption and Table_Heading styled paragraphs
+//      (standalone caption lines in the body text, separate from description rows)
+//   5. Superscript {{N}} markers → apply Char_Superscript character style
+//      NOTE: Run this AFTER creating native footnotes for {{fn:N}} markers (Part A).
+//            {{fn:N}} markers are handled manually via native footnote insertion.
+//            This step only superscripts plain {{N}} and {{letter}} markers.
+//            If Part A is not done yet, undo step 5 (Cmd+Z), do Part A, then re-run.
 
 var doc = app.activeDocument;
 var report = [];
@@ -57,10 +62,29 @@ report.push("Extra returns fixed: " + count);
 count = doGrepChange("(?<=\\d) x (?=[A-Z])", " \u00D7 ");
 report.push("Multiplication signs normalized: " + count);
 
-// --- 4. Superscript {{N}} markers → Char_Superscript ---
+// --- 4. "Table N." → "Table N:" in caption/heading paragraphs ---
+// Handles standalone Table_Caption and Table_Heading paragraphs in the body text.
+// (Description rows inside tables are already handled by extract_tables.py.)
+var captionStyles = ["Table_Caption", "Table_Heading"];
+var captionCount = 0;
+for (var cs = 0; cs < captionStyles.length; cs++) {
+    try {
+        captionCount += doGrepChange("(Table \\d+)\\.", "$1:", captionStyles[cs]);
+    } catch (e) {}
+}
+report.push("Table caption periods → colons: " + captionCount);
+
+// --- 5. Superscript {{N}} and {{letter}} markers → Char_Superscript ---
+// Handles: plain numeric markers {{1}}, {{2}} (non-native superscripts)
+//          and table footnote letter markers {{a}}, {{b}}, {{c}} etc.
+// Does NOT match {{fn:N}} or {{en:N}} — those are native footnote refs, handled manually.
 try {
-    count = doGrepChange("\\{\\{(\\d+)\\}\\}", "$1", null, "Char_Superscript");
-    report.push("Superscript markers restored: " + count);
+    var supCount = 0;
+    // Numeric markers: {{1}}, {{2}}, etc.
+    supCount += doGrepChange("\\{\\{(\\d+)\\}\\}", "$1", null, "Char_Superscript");
+    // Single-letter markers: {{a}}, {{b}}, etc. (table footnote markers)
+    supCount += doGrepChange("\\{\\{([a-zA-Z])\\}\\}", "$1", null, "Char_Superscript");
+    report.push("Superscript markers restored: " + supCount);
 } catch (e) {
     report.push("Superscript fix skipped — 'Char_Superscript' character style not found.");
 }
@@ -73,6 +97,7 @@ app.changeGrepPreferences = NothingEnum.nothing;
 alert(
     "Cleanup complete!\n\n" +
     report.join("\n") +
-    "\n\nReminder: Step 4 (superscript) should run AFTER creating native footnotes.\n" +
+    "\n\nReminder: Step 5 (superscript) should run AFTER creating native footnotes (Part A).\n" +
+    "{{fn:N}} markers are handled manually — do not use this script to process them.\n" +
     "If needed, undo (Cmd+Z), create footnotes first, then re-run this script."
 );

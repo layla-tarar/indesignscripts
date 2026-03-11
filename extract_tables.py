@@ -106,6 +106,113 @@ def _mark_superscripts(doc: Document) -> None:
                 process_paragraphs(cell.paragraphs)
 
 
+
+def _strip_field_codes(doc: Document) -> None:
+    """
+    Remove Word field code machinery from all paragraphs, keeping only the
+    display text (the portion between 'separate' and 'end' markers).
+
+    Word fields (Mendeley/Zotero citations, cross-refs, page numbers, etc.) have:
+      <w:fldChar fldCharType="begin"/>   ← remove
+      <w:instrText>...JSON/code...</w:instrText>  ← remove
+      <w:fldChar fldCharType="separate"/>  ← remove
+      <w:t>visible text</w:t>              ← KEEP
+      <w:fldChar fldCharType="end"/>       ← remove
+    """
+    fldchar_tag      = qn("w:fldChar")
+    r_tag            = qn("w:r")
+    fldchartype_attr = qn("w:fldCharType")
+
+    def strip_fields(p_el):
+        in_instruction = False
+        for child in list(p_el):  # snapshot — we mutate during iteration
+            if child.tag != r_tag:
+                continue
+            fldchar = child.find(fldchar_tag)
+            if fldchar is not None:
+                ftype = fldchar.get(fldchartype_attr, "")
+                if ftype == "begin":
+                    in_instruction = True
+                    p_el.remove(child)
+                elif ftype == "separate":
+                    in_instruction = False
+                    p_el.remove(child)
+                elif ftype == "end":
+                    p_el.remove(child)
+            elif in_instruction:
+                p_el.remove(child)  # instruction runs (instrText, etc.)
+
+    for para in doc.paragraphs:
+        strip_fields(para._p)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    strip_fields(para._p)
+
+
+def _strip_character_styles(doc: Document) -> None:
+    """
+    Strip run-level formatting that would override InDesign paragraph styles on placement:
+    - Unwrap <w:hyperlink> elements (keeping link text as plain runs)
+    - Remove from <w:rPr>: rStyle, rFonts, sz/szCs (font size), color, b/bCs (bold),
+      u (underline), highlight, kern, spacing, lang
+    Preserves: i/iCs (italics) and vertAlign (superscript — handled separately).
+    """
+    rpr_tag       = qn("w:rPr")
+    hyperlink_tag = qn("w:hyperlink")
+
+    # Run properties to strip — everything that constitutes a direct formatting override
+    _STRIP_RPR = {
+        qn("w:rStyle"),
+        qn("w:rFonts"),
+        qn("w:sz"),    qn("w:szCs"),
+        qn("w:color"),
+        qn("w:b"),     qn("w:bCs"),
+        qn("w:u"),
+        qn("w:highlight"),
+        qn("w:kern"),
+        qn("w:spacing"),
+        qn("w:lang"),
+    }
+
+    ppr_tag   = qn("w:pPr")
+
+    def strip_run_overrides(paragraphs):
+        for para in paragraphs:
+            # Unwrap any <w:hyperlink> elements in this paragraph's XML
+            p_el = para._p
+            for hl in p_el.findall(hyperlink_tag):
+                parent = hl.getparent()
+                idx = list(parent).index(hl)
+                for child in list(hl):
+                    parent.insert(idx, child)
+                    idx += 1
+                parent.remove(hl)
+
+            # Strip the paragraph mark's <w:rPr> which can carry font overrides.
+            # (pStyle remapping is handled separately by _remap_paragraph_styles.)
+            ppr = p_el.find(ppr_tag)
+            if ppr is not None:
+                ppr_rpr = ppr.find(rpr_tag)
+                if ppr_rpr is not None:
+                    ppr.remove(ppr_rpr)
+
+            # Strip direct formatting from every run's <w:rPr>
+            for run in para.runs:
+                rpr = run._r.find(rpr_tag)
+                if rpr is not None:
+                    for child in list(rpr):
+                        if child.tag in _STRIP_RPR:
+                            rpr.remove(child)
+
+    strip_run_overrides(doc.paragraphs)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                strip_run_overrides(cell.paragraphs)
+
+
 def _clean_runs(doc: Document) -> None:
     """
     Text-level cleanup applied to every run in the document before extraction.
@@ -140,10 +247,7 @@ def _clean_runs(doc: Document) -> None:
                     for para in cell.paragraphs:
                         for run in para.runs:
                             run.text = run.text.replace("X", "x")
-                # Strip direct bold formatting so InDesign paragraph style controls weight
-                for para in cell.paragraphs:
-                    for run in para.runs:
-                        run.font.bold = None
+                pass  # bold stripped globally by _strip_character_styles()
 
 
 _FOOTNOTES_REL = (
@@ -247,6 +351,73 @@ def extract_footnotes(source_path: str, output_path: str) -> int:
     return count
 
 
+def export_footnotes_txt(source_path: str, output_path: str) -> int:
+    """
+    Write a tab-separated .txt file mapping footnote/endnote IDs to their plain text.
+    Format per line:  fn:1<TAB>Footnote text here\n
+    Multi-paragraph footnotes are joined with \\r (InDesign paragraph break sentinel).
+    Returns the number of entries written (0 = nothing written, no file saved).
+    """
+    if not os.path.isfile(source_path):
+        raise FileNotFoundError(f"Source file not found: {source_path}")
+
+    doc = Document(source_path)
+
+    t_tag     = qn("w:t")
+    rpr_tag   = qn("w:rPr")
+    fn_tag    = qn("w:footnote")
+    en_tag    = qn("w:endnote")
+    id_attr   = qn("w:id")
+    type_attr = qn("w:type")
+    ref_tags  = {qn("w:footnoteRef"), qn("w:endnoteRef")}
+
+    entries: list[tuple[str, str]] = []
+
+    def _note_plain_text(note_el) -> str:
+        """Collect plain text from all paragraphs in a note, joining with \\r."""
+        paragraphs = []
+        for p_el in note_el.findall(qn("w:p")):
+            para_text = ""
+            for r_el in p_el.findall(qn("w:r")):
+                # Skip the auto-number reference run
+                non_rpr = [c for c in list(r_el) if c.tag != rpr_tag]
+                if len(non_rpr) == 1 and non_rpr[0].tag in ref_tags:
+                    continue
+                for t_el in r_el.findall(t_tag):
+                    if t_el.text:
+                        para_text += t_el.text
+            stripped = para_text.lstrip(" \t\xa0")
+            if stripped:
+                paragraphs.append(stripped)
+        return "\r".join(paragraphs)
+
+    def _collect_from_part(rel_uri, note_tag, label_prefix):
+        try:
+            part = doc.part.part_related_by(rel_uri)
+            part_xml = etree.fromstring(part.blob)
+        except (KeyError, Exception):
+            return
+        for note in part_xml.findall(note_tag):
+            if note.get(type_attr) in _SKIP_FOOTNOTE_TYPES:
+                continue
+            note_id = note.get(id_attr, "?")
+            text = _note_plain_text(note)
+            if text:
+                entries.append((f"{label_prefix}:{note_id}", text))
+
+    _collect_from_part(_FOOTNOTES_REL, fn_tag, "fn")
+    _collect_from_part(_ENDNOTES_REL,  en_tag, "en")
+
+    if not entries:
+        return 0
+
+    with open(output_path, "w", encoding="utf-8") as fh:
+        for key, text in entries:
+            fh.write(f"{key}\t{text}\n")
+
+    return len(entries)
+
+
 def extract_tables(source_path: str, output_path: str) -> None:
     """
     Read a source .docx file and write a new .docx containing only the tables
@@ -324,25 +495,35 @@ def main(argv: list[str]) -> None:
 
     source_path = argv[1]
     base, ext = os.path.splitext(source_path)
-    tables_path    = base + "_tables"    + ext
-    text_path      = base + "_text"      + ext
-    footnotes_path = base + "_footnotes" + ext
+    tables_path        = base + "_tables"    + ext
+    text_path          = base + "_text"      + ext
+    footnotes_path     = base + "_footnotes" + ext
+    footnotes_txt_path = base + "_footnotes" + ".txt"
 
     # Footnotes are extracted from the original source (unmodified)
     try:
         n = extract_footnotes(source_path, footnotes_path)
         if n:
-            print(f"Footnotes file: {footnotes_path} ({n} notes)")
+            print(f"Footnotes docx: {footnotes_path} ({n} notes)")
         else:
-            print("Footnotes file: none found")
+            print("Footnotes docx: none found")
     except Exception as e:
-        print(f"Warning: could not extract footnotes: {e}", file=sys.stderr)
+        print(f"Warning: could not extract footnotes docx: {e}", file=sys.stderr)
+
+    try:
+        n_txt = export_footnotes_txt(source_path, footnotes_txt_path)
+        if n_txt:
+            print(f"Footnotes txt:  {footnotes_txt_path} ({n_txt} notes)")
+    except Exception as e:
+        print(f"Warning: could not export footnotes txt: {e}", file=sys.stderr)
 
     # Pre-process: mark superscripts/footnotes in a temp copy, then extract from that
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext)
     os.close(tmp_fd)
     try:
         doc = Document(source_path)
+        _strip_field_codes(doc)
+        _strip_character_styles(doc)
         _mark_superscripts(doc)
         _clean_runs(doc)
         doc.save(tmp_path)

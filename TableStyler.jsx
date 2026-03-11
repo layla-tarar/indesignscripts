@@ -161,14 +161,38 @@
             table.clearTableStyleOverrides();
         } catch (e) {}
 
-        // 1b. Cell style overrides
+        // 1b. Cell style overrides — preserve fill colors before clearing
         try {
             var cells = table.cells.everyItem().getElements();
+
+            // Save fill colors first (clearCellStyleOverrides resets fill to [None])
+            var cellFills = [];
+            for (var c = 0; c < cells.length; c++) {
+                var fill = null;
+                try {
+                    var fc = cells[c].fillColor;
+                    if (fc && fc.isValid && fc.name !== "[None]" && fc.name !== "None") {
+                        fill = { color: fc, tint: cells[c].fillTint };
+                    }
+                } catch (ef) {}
+                cellFills.push(fill);
+            }
+
             for (var c = 0; c < cells.length; c++) {
                 if (noneCellStyle && noneCellStyle.isValid) {
                     cells[c].appliedCellStyle = noneCellStyle;
                 }
                 cells[c].clearCellStyleOverrides();
+            }
+
+            // Restore fill colors
+            for (var c = 0; c < cells.length; c++) {
+                if (cellFills[c]) {
+                    try {
+                        cells[c].fillColor = cellFills[c].color;
+                        cells[c].fillTint  = cellFills[c].tint;
+                    } catch (er) {}
+                }
             }
         } catch (e) {}
 

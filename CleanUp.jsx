@@ -48,6 +48,71 @@ function doGrepChange(findWhat, changeTo, findParaStyle, changeCharStyle) {
     return results.length;
 }
 
+// --- Pre-0. Remap imported Word paragraph styles → InDesign template styles ---
+// paragraphStyle.remove(replacement) reassigns all uses AND deletes the imported style.
+// Run before override clearing so overrides are wiped against the correct styles.
+var styleRemap = [
+    { from: "Normal",                   to: "Body_Text" },
+    { from: "Body Text",                to: "Body_Text" },
+    { from: "Default",                  to: "Body_Text" },
+    { from: "Default Paragraph Font",   to: "Body_Text" },
+    { from: "Heading 1",                to: "Head_Section" },
+    { from: "Heading 2",                to: "Head_SubsectionUnnumbered" },
+    { from: "Heading 3",                to: "Head_SubSubSectionUnnumbered" },
+    { from: "Title",                    to: "Title_Title" },
+    { from: "List Paragraph",           to: "Body_BulletL1" },
+];
+var remapCount = 0;
+for (var r = 0; r < styleRemap.length; r++) {
+    try {
+        var fromStyle = doc.paragraphStyles.itemByName(styleRemap[r].from);
+        var toStyle   = doc.paragraphStyles.itemByName(styleRemap[r].to);
+        if (fromStyle.isValid && toStyle.isValid) {
+            fromStyle.remove(toStyle);
+            remapCount++;
+        }
+    } catch (e) {}
+}
+report.push("Word paragraph styles remapped + deleted: " + remapCount);
+
+// Fallback: apply Body_Text to any paragraphs still on [Basic Paragraph]
+// (InDesign assigns [Basic Paragraph] when a placed paragraph has no matching style.)
+try {
+    app.findGrepPreferences = NothingEnum.nothing;
+    app.changeGrepPreferences = NothingEnum.nothing;
+    app.findGrepPreferences.findWhat = ".+";
+    app.findGrepPreferences.appliedParagraphStyle =
+        doc.paragraphStyles.itemByName("[Basic Paragraph]");
+    app.changeGrepPreferences.appliedParagraphStyle =
+        doc.paragraphStyles.itemByName("Body_Text");
+    var fallbackCount = doc.changeGrep().length;
+    if (fallbackCount > 0) report.push("Unstyled → Body_Text: " + fallbackCount);
+    app.findGrepPreferences = NothingEnum.nothing;
+    app.changeGrepPreferences = NothingEnum.nothing;
+} catch (e) {}
+
+// --- 0. Clear character style overrides and local formatting overrides ---
+// Strips character styles and direct run formatting imported from Word
+// (fonts, sizes, colors, bold, underline, etc.) so InDesign paragraph styles
+// fully control appearance. Step 5 re-applies Char_Superscript from {{...}} markers.
+app.findGrepPreferences = NothingEnum.nothing;
+app.changeGrepPreferences = NothingEnum.nothing;
+app.findGrepPreferences.findWhat = ".+";
+app.changeGrepPreferences.appliedCharacterStyle = doc.characterStyles.itemByName("[None]");
+var clearCharCount = doc.changeGrep().length;
+app.findGrepPreferences = NothingEnum.nothing;
+app.changeGrepPreferences = NothingEnum.nothing;
+
+// Clear all local text overrides (font, size, color, etc.) from every paragraph
+var stories = doc.stories.everyItem().getElements();
+for (var s = 0; s < stories.length; s++) {
+    var paras = stories[s].paragraphs.everyItem().getElements();
+    for (var p = 0; p < paras.length; p++) {
+        try { paras[p].clearOverrides(OverrideType.LOCAL_ONLY); } catch(e) {}
+    }
+}
+report.push("Character + local formatting overrides cleared: " + clearCharCount + " ranges");
+
 // --- 1. Double spaces → single space ---
 var count = doGrepChange(" {2,}", " ");
 report.push("Double spaces fixed: " + count);

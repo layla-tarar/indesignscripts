@@ -6,17 +6,30 @@
 //     2. Clear cell style overrides (→ [None])
 //     3. Clear paragraph and character style overrides within cells
 //
-//   Phase 2 — Structure
+//   Phase 2 — Structure (ALL tables)
 //     4. Convert first row to a header row
 //     5. Set all row heights to "At Least" 3pt (rows expand to fit content)
 //     6. Apply Table_Span paragraph style to the paragraph containing the table
+//     7. Set table width to 504pt, flush left
 //
 //   Phase 3 — Classification & styling
-//     7. Detect approval tables (≥10% of body cells in country columns contain "x")
-//     8. Apply TStyle_Approvals or TStyle_Simple accordingly
+//     8. Detect approval tables (≥10% of body cells in country columns contain "x")
+//     9. Apply TStyle_Approvals or TStyle_Simple accordingly
 //
-// Run AFTER placing the _tables.docx and BEFORE manual column/cell-style adjustments.
-// Run from InDesign: File > Scripts > Scripts Panel, then double-click.
+//   Phase 4 — Approval table detail styling (approval tables only)
+//    10. Header cell styles:
+//          Leftmost  → CStyle_HeaderRotatedLeft (overridden to CStyle_Header_left if "Crop")
+//          Rightmost → CStyle_HeaderRotatedRight
+//          Contains "Event Name" → CStyle_Header_middle
+//    11. Body column styles:
+//          Column whose header contains "Crop"       → CStyle_BodyApproval_Crop
+//          Column whose header contains "Event Name" → CStyle_BodyApproval_Event
+//    12. "x" cell styles (override column style):
+//          Body cell = "x", no fill  → CStyle_BodyApproval_x
+//          Body cell = "x", has fill → CStyle_BodyApproval_x_Highlight
+//    13. Distribute country columns (not Crop / Event Name) evenly across remaining width
+//
+// Run AFTER placing the _tables.docx and BEFORE manual bottom-row cell-style adjustments.
 
 (function () {
     if (app.documents.length === 0) {
@@ -26,7 +39,7 @@
 
     var doc = app.activeDocument;
 
-    // --- Resolve styles (fail fast if essential ones are missing) ---
+    // --- Resolve required table styles ---
     var approvalStyle = doc.tableStyles.itemByName("TStyle_Approvals");
     var simpleStyle   = doc.tableStyles.itemByName("TStyle_Simple");
     if (!approvalStyle.isValid || !simpleStyle.isValid) {
@@ -46,6 +59,18 @@
         tableSpanStyle.name; // force resolve — throws if not found
         hasTableSpan = true;
     } catch (e) {}
+
+    // Resolve approval cell styles — warn but do not abort if missing
+    var acs = {
+        headerRotLeft:  getCellStyleSafe(doc, "CStyle_HeaderRotatedLeft"),
+        headerRotRight: getCellStyleSafe(doc, "CStyle_HeaderRotatedRight"),
+        headerCrop:     getCellStyleSafe(doc, "CStyle_Header_left"),
+        headerEvent:    getCellStyleSafe(doc, "CStyle_Header_middle"),
+        bodyCrop:       getCellStyleSafe(doc, "CStyle_BodyApproval_Crop"),
+        bodyEvent:      getCellStyleSafe(doc, "CStyle_BodyApproval_Event"),
+        bodyX:          getCellStyleSafe(doc, "CStyle_BodyApproval_x"),
+        bodyXHighlight: getCellStyleSafe(doc, "CStyle_BodyApproval_x_Highlight")
+    };
 
     // --- Run everything as one undoable action ---
     app.doScript(
@@ -78,7 +103,7 @@
                         } catch (e) {}
                     }
 
-                    setRowHeights(table, "3pt");
+                    setRowHeights(table, 3);
 
                     if (hasTableSpan) {
                         try {
@@ -87,6 +112,8 @@
                             counts.spans++;
                         } catch (e) {}
                     }
+
+                    setTableFullWidth(table, 504);
 
                     // --- Phase 3: Classify and style ---
                     if (table.rows.length < 1 || table.columns.length < 2) {
@@ -98,6 +125,8 @@
                     var result = isApprovalTable(table);
                     if (result.isApproval) {
                         table.appliedTableStyle = approvalStyle;
+                        // --- Phase 4: Approval detail styling ---
+                        styleApprovalTable(table, acs);
                         counts.approvals++;
                     } else {
                         table.appliedTableStyle = simpleStyle;
@@ -134,10 +163,9 @@
                 msg += "\n\nNon-approval tables (first " + debugLines.length + "):\n- " +
                        debugLines.join("\n- ");
             }
-            msg += "\n\nNext steps (manual, per table):\n" +
-                   "1. Apply edge header cell styles (CStyle_HeaderLeft, CStyle_HeaderRight)\n" +
-                   "2. Apply bottom row cell style (CStyle_BodyBottom or CStyle_BodyApprovalBottom)\n" +
-                   "3. Adjust column widths as needed";
+            msg += "\n\nRemaining manual steps (per table):\n" +
+                   "1. Apply bottom-row cell style (CStyle_BodyBottom or CStyle_BodyApprovalBottom)\n" +
+                   "2. Review column widths";
 
             alert(msg);
         },
@@ -148,9 +176,9 @@
     );
 
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Phase 1 helper: clear all style overrides on a table
-    // -------------------------------------------------------------------------
+    // =========================================================================
     function clearTableOverrides(table, doc, basicTableStyle, noneCellStyle,
                                   basicParaStyle, noneCharStyle) {
         // 1a. Table style overrides
@@ -165,7 +193,6 @@
         try {
             var cells = table.cells.everyItem().getElements();
 
-            // Save fill colors first (clearCellStyleOverrides resets fill to [None])
             var cellFills = [];
             for (var c = 0; c < cells.length; c++) {
                 var fill = null;
@@ -185,7 +212,6 @@
                 cells[c].clearCellStyleOverrides();
             }
 
-            // Restore fill colors
             for (var c = 0; c < cells.length; c++) {
                 if (cellFills[c]) {
                     try {
@@ -226,27 +252,31 @@
     }
 
 
-    // -------------------------------------------------------------------------
-    // Phase 2 helper: set all row heights to "At Least N"
-    // -------------------------------------------------------------------------
-    function setRowHeights(table, minHeight) {
+    // =========================================================================
+    // Phase 2 helpers
+    // =========================================================================
+    function setRowHeights(table, minHeightPt) {
         try {
             var rows = table.rows.everyItem().getElements();
             for (var r = 0; r < rows.length; r++) {
                 rows[r].autoGrow = true;
-                rows[r].height = minHeight;
+                rows[r].height   = minHeightPt; // numeric points
             }
         } catch (e) {}
     }
 
+    function setTableFullWidth(table, totalWidth) {
+        try { table.width = totalWidth; } catch (e) {}
+        try { table.horizontalLayoutAlignment = HorizontalAlignment.LEFT_ALIGN; } catch (e) {}
+    }
 
-    // -------------------------------------------------------------------------
+
+    // =========================================================================
     // Phase 3 helper: classify table as approval or simple
     // Heuristic: ≥10% of body cells in country columns (col 2+) contain "x"
-    // -------------------------------------------------------------------------
+    // =========================================================================
     function isApprovalTable(table) {
-        var headerRowIndex  = 0; // first row is always treated as header
-        var startBodyRow    = headerRowIndex + 1;
+        var startBodyRow    = 1; // first row is always treated as header
         var startCountryCol = 2; // col 0: Crop, col 1: Event Name, col 2+: countries
 
         if (startBodyRow >= table.rows.length || startCountryCol >= table.columns.length) {
@@ -279,9 +309,59 @@
     }
 
 
+    // =========================================================================
+    // Phase 4: approval table — fix header row height after text rotation
+    // TStyle_Approvals applies text rotation to header cells; this runs after
+    // the style is applied so InDesign uses the rotated text dimensions when
+    // computing the minimum row height.
+    // =========================================================================
+    function styleApprovalTable(table, styles) {
+        if (table.rows.length === 0) return;
+        try {
+            var hRow = table.rows[0];
+            hRow.autoGrow = true;
+            hRow.height   = 3; // numeric points (At Least 3pt) — row expands to fit rotated text
+        } catch (e) {}
+    }
+
+
     // -------------------------------------------------------------------------
-    // Low-level cell helpers
+    // Distribute all non-Crop, non-EventName columns to equal width,
+    // filling the space left after the reserved columns.
     // -------------------------------------------------------------------------
+    function distributeCountryColumns(table, totalWidth, cropColIdx, eventColIdx) {
+        try {
+            var cols    = table.columns.everyItem().getElements();
+            var numCols = cols.length;
+
+            // Measure reserved column widths
+            var reservedWidth = 0;
+            var reservedCount = 0;
+            for (var c = 0; c < numCols; c++) {
+                if (c === cropColIdx || c === eventColIdx) {
+                    try { reservedWidth += cols[c].width; } catch (e) {}
+                    reservedCount++;
+                }
+            }
+
+            var countryCount = numCols - reservedCount;
+            if (countryCount <= 0) return;
+
+            var countryWidth = (totalWidth - reservedWidth) / countryCount;
+            if (countryWidth < 1) return; // safety: don't collapse columns
+
+            for (var c = 0; c < numCols; c++) {
+                if (c !== cropColIdx && c !== eventColIdx) {
+                    try { cols[c].width = countryWidth; } catch (e) {}
+                }
+            }
+        } catch (e) {}
+    }
+
+
+    // =========================================================================
+    // Low-level helpers
+    // =========================================================================
     function getCellText(cell) {
         var txt = "";
         try { txt = cell.contents; } catch (e) {}
@@ -309,6 +389,27 @@
             if (!isNaN(n) && n >= 1) return n;
         } catch (e) {}
         return 1;
+    }
+
+    function cellHasFill(cell) {
+        try {
+            var fc = cell.fillColor;
+            return fc && fc.isValid && fc.name !== "[None]" && fc.name !== "None";
+        } catch (e) {}
+        return false;
+    }
+
+    function getCellStyleSafe(doc, name) {
+        try {
+            var s = doc.cellStyles.itemByName(name);
+            if (s && s.isValid) return s;
+        } catch (e) {}
+        return null;
+    }
+
+    function setCellStyle(cell, style) {
+        if (!style) return;
+        try { cell.appliedCellStyle = style; } catch (e) {}
     }
 
 })();

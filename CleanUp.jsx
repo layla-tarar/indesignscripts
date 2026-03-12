@@ -1,12 +1,19 @@
 // CleanUp.jsx
-// Run AFTER placing the _text.docx file in InDesign and applying paragraph styles.
+// Run on the active document containing the placed _clean.docx content.
 //
-// The following are already handled by extract_tables.py (before placement):
+// REQUIRED SCRIPT ORDER (all scripts operate on the same _clean.docx placement):
+//   1. TableStyler.jsx      — resets and styles all tables (clears cell overrides)
+//   2. InsertFootnotes.jsx  — replaces {{fn:N}} markers with native footnotes
+//   3. CleanUp.jsx          — text cleanup + superscript restoration (this script)
+//      Step 5 (Char_Superscript) must run AFTER TableStyler, which clears cell
+//      character overrides, and AFTER InsertFootnotes, which removes {{fn:N}} markers.
+//
+// The following are already handled by clean_docx.py (before placement):
 //   - Bullet character stripping (U+2022)
 //   - Tilde operator (U+223C) → standard tilde
-//   - "Table N." → "Table N:" in table description rows (_text file)
+//   - "Table N." → "Table N:" in table description rows
 //   - Superscript/footnote markers wrapped as {{...}}
-//   - Bold stripped from table cells
+//   - Character style overrides stripped from runs
 //
 // This script handles what remains:
 //   1. Double spaces → single space
@@ -15,10 +22,8 @@
 //   4. "Table N." → "Table N:" in Table_Caption and Table_Heading styled paragraphs
 //      (standalone caption lines in the body text, separate from description rows)
 //   5. Superscript {{N}} markers → apply Char_Superscript character style
-//      NOTE: Run this AFTER creating native footnotes for {{fn:N}} markers (Part A).
-//            {{fn:N}} markers are handled manually via native footnote insertion.
-//            This step only superscripts plain {{N}} and {{letter}} markers.
-//            If Part A is not done yet, undo step 5 (Cmd+Z), do Part A, then re-run.
+//      Handles plain {{N}}, {{letter}}, and in-cell markers like {{a}}, {{b}}.
+//      Does NOT match {{fn:N}} or {{en:N}} — those are native footnote refs.
 
 var doc = app.activeDocument;
 var report = [];
@@ -162,7 +167,6 @@ app.changeGrepPreferences = NothingEnum.nothing;
 alert(
     "Cleanup complete!\n\n" +
     report.join("\n") +
-    "\n\nReminder: Step 5 (superscript) should run AFTER creating native footnotes (Part A).\n" +
-    "{{fn:N}} markers are handled manually — do not use this script to process them.\n" +
-    "If needed, undo (Cmd+Z), create footnotes first, then re-run this script."
+    "\n\nReminder: This script should run AFTER TableStyler.jsx and InsertFootnotes.jsx.\n" +
+    "If you haven't run those yet, undo (Cmd+Z) and run them first."
 );

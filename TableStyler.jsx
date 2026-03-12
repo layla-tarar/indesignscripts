@@ -29,7 +29,9 @@
 //          Body cell = "x", has fill → CStyle_BodyApproval_x_Highlight
 //    13. Distribute country columns (not Crop / Event Name) evenly across remaining width
 //
-// Run AFTER placing the _tables.docx and BEFORE manual bottom-row cell-style adjustments.
+// Run AFTER placing the _clean.docx and BEFORE CleanUp.jsx.
+// Phase 1 clears all character overrides in table cells — CleanUp.jsx (step 5) must
+// run afterward to restore Char_Superscript on {{a}}/{{b}}/{{N}} markers in cells.
 
 (function () {
     if (app.documents.length === 0) {

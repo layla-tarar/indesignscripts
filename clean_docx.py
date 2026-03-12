@@ -415,6 +415,257 @@ def export_footnotes_txt(source_path: str, output_path: str) -> int:
     return len(entries)
 
 
+# ---------------------------------------------------------------------------
+# Heuristic paragraph style inference
+# ---------------------------------------------------------------------------
+
+# InDesign style names assigned by this function — used to skip already-styled
+# paragraphs on subsequent passes.
+_ASSIGNED_STYLES = frozenset({
+    "Table_Header", "Table_FootNote", "Head_SubsectionUnnumbered",
+    "Head_CropName", "Head_Section",
+})
+
+# Word paragraph style IDs that carry no structural meaning — heuristics only
+# run on paragraphs with one of these styles (or no style at all).
+# Paragraphs with any other Word style (e.g. Heading1, Title) are left alone
+# so that CleanUp.jsx can remap them to the correct InDesign style.
+_WORD_BODY_STYLE_IDS = frozenset({
+    None,
+    "Normal", "Normal0",
+    "Body Text", "BodyText", "BodyText1", "Body Text1",
+    "Default", "DefaultParagraphFont", "Default Paragraph Font",
+})
+
+_TABLE_CAPTION_RE  = re.compile(r"^Table\s+\d+[.:]", re.IGNORECASE)
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^)]+\)\s*$")
+# Table footnote marker patterns (non-superscripted — superscripted markers are
+# already caught by the {{...}} check):
+#   * or ** at the start of a paragraph  →  e.g. "*Pakistan has also..."
+#   single lowercase letter + space      →  e.g. "a Values represent..."
+#     (paired with sz < body default to avoid matching normal body sentences)
+_TABLE_FOOTNOTE_ASTERISK_RE    = re.compile(r"^\*+\s*\S")
+_TABLE_FOOTNOTE_LETTER_MARK_RE = re.compile(r"^[a-z]\s")
+
+
+def _get_para_style_val(para) -> str | None:
+    """Return the w:pStyle val for this paragraph, or None if not set."""
+    pPr = para._p.find(qn("w:pPr"))
+    if pPr is None:
+        return None
+    pStyle = pPr.find(qn("w:pStyle"))
+    if pStyle is None:
+        return None
+    return pStyle.get(qn("w:val"))
+
+
+def _set_para_style_val(para, style_name: str) -> None:
+    """Stamp a w:pStyle value onto an existing paragraph element."""
+    p = para._p
+    pPr = p.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p.insert(0, pPr)
+    pStyle = pPr.find(qn("w:pStyle"))
+    if pStyle is None:
+        pStyle = OxmlElement("w:pStyle")
+        pPr.insert(0, pStyle)
+    pStyle.set(qn("w:val"), style_name)
+
+
+def _first_run_is_bold_or_smallcaps(para) -> bool:
+    """Return True if the first non-empty run has bold or small-caps formatting."""
+    for run in para.runs:
+        if not run.text.strip():
+            continue
+        rpr = run._r.find(qn("w:rPr"))
+        if rpr is None:
+            return False
+        for tag in (qn("w:b"), qn("w:smallCaps")):
+            el = rpr.find(tag)
+            if el is not None and el.get(qn("w:val"), "true") not in ("false", "0"):
+                return True
+        return False
+    return False
+
+
+def _first_run_font_size(para) -> int | None:
+    """Return the w:sz half-point value of the first non-empty run, or None if unset."""
+    for run in para.runs:
+        if not run.text.strip():
+            continue
+        rpr = run._r.find(qn("w:rPr"))
+        if rpr is not None:
+            sz_el = rpr.find(qn("w:sz"))
+            if sz_el is not None:
+                val = sz_el.get(qn("w:val"))
+                if val is not None:
+                    return int(val)
+        return None  # first non-empty run has no explicit sz
+    return None
+
+
+def _first_run_is_italic(para) -> bool:
+    """Return True if the first non-empty run has italic formatting."""
+    for run in para.runs:
+        if not run.text.strip():
+            continue
+        rpr = run._r.find(qn("w:rPr"))
+        if rpr is None:
+            return False
+        el = rpr.find(qn("w:i"))
+        if el is not None and el.get(qn("w:val"), "true") not in ("false", "0"):
+            return True
+        return False
+    return False
+
+
+def _register_assigned_styles(doc: Document) -> None:
+    """
+    Add a minimal Word paragraph style definition to styles.xml for each
+    InDesign style name we assign via _set_para_style_val.
+
+    Without a definition in styles.xml the <w:pStyle w:val="..."> reference
+    is unknown to InDesign, which falls back to [Basic Paragraph] and then
+    CleanUp.jsx converts those paragraphs to Body_Text.
+
+    The styles are custom (w:customStyle="1"), based on Normal, and carry no
+    formatting of their own — InDesign maps them to the matching InDesign
+    paragraph style by name on placement.
+    """
+    try:
+        styles_el = doc.styles._element
+    except AttributeError:
+        return
+
+    existing_ids = {
+        el.get(qn("w:styleId"), "")
+        for el in styles_el.findall(qn("w:style"))
+    }
+
+    for style_name in sorted(_ASSIGNED_STYLES):
+        if style_name in existing_ids:
+            continue
+        w_style = OxmlElement("w:style")
+        w_style.set(qn("w:type"), "paragraph")
+        w_style.set(qn("w:customStyle"), "1")
+        w_style.set(qn("w:styleId"), style_name)
+        w_name = OxmlElement("w:name")
+        w_name.set(qn("w:val"), style_name)
+        w_style.append(w_name)
+        w_basedOn = OxmlElement("w:basedOn")
+        w_basedOn.set(qn("w:val"), "Normal")
+        w_style.append(w_basedOn)
+        styles_el.append(w_style)
+
+
+def _infer_paragraph_styles(doc: Document) -> None:
+    """
+    Heuristically assign InDesign paragraph styles to body-text paragraphs.
+
+    Must run AFTER _mark_superscripts (needs {{...}} markers in text) and
+    BEFORE _strip_character_styles (needs bold/small-caps XML attributes).
+
+    Priority (first match wins; already-assigned paragraphs are skipped):
+      1. Table_Header              — "Table N." or "Table N:"
+      2. Table_FootNote            — starts with {{ but not a {{fn:}} / {{en:}} ref
+                                     (superscripted markers converted by _mark_superscripts)
+      3. Table_FootNote            — starts with one or more * (literal asterisk markers)
+      4. Table_FootNote            — starts with a lowercase letter + space AND font size
+                                     < 24 half-pts (catches "a Values…" / "b Note…" markers
+                                     that are not superscripted in the source)
+      4b.Table_FootNote            — starts with a lowercase letter + space AND first run
+                                     is italic at body size (no explicit sz, but italic
+                                     signals annotation rather than body text)
+      5. Head_SubsectionUnnumbered — first run is bold or small-caps, not all caps
+      6. Head_SubsectionUnnumbered — first run font size > 24 half-pts (> 12pt body default),
+                                     not all caps (catches enlarged-font headings with no other
+                                     formatting signal)
+      7. Head_CropName             — 1–2 all-caps words (+ optional parenthetical), no period
+      8. Head_Section              — 3+ all-caps words, no period
+    """
+    for para in doc.paragraphs:
+        style_val = _get_para_style_val(para)
+
+        # Skip paragraphs we already assigned a style to on a previous pass.
+        if style_val in _ASSIGNED_STYLES:
+            continue
+
+        # Skip paragraphs that already carry a meaningful Word structural style
+        # (Heading 1/2/3, Title, List Paragraph, etc.).  CleanUp.jsx remaps
+        # those to the correct InDesign styles, so the heuristics below must
+        # not overwrite them.
+        if style_val not in _WORD_BODY_STYLE_IDS:
+            continue
+
+        text = para.text.strip()
+        if not text:
+            continue
+
+        # 1. Table caption / header
+        if _TABLE_CAPTION_RE.match(text):
+            _set_para_style_val(para, "Table_Header")
+            continue
+
+        # 2. Table footnote — {{letter/number}} superscript marker (not a fn/en ref)
+        if text.startswith("{{") and not (
+            text.startswith("{{fn:") or text.startswith("{{en:")
+        ):
+            _set_para_style_val(para, "Table_FootNote")
+            continue
+
+        # 3. Table footnote — literal asterisk marker (* or **)
+        if _TABLE_FOOTNOTE_ASTERISK_RE.match(text):
+            _set_para_style_val(para, "Table_FootNote")
+            continue
+
+        # 4. Table footnote — single lowercase letter + space, sub-body font size
+        # e.g. "a Values represent the means..." (marker not superscripted in source)
+        sz = _first_run_font_size(para)
+        if _TABLE_FOOTNOTE_LETTER_MARK_RE.match(text) and sz is not None and sz < 24:
+            _set_para_style_val(para, "Table_FootNote")
+            continue
+
+        # 4b. Table footnote — single lowercase letter + space, italic at body size
+        # Catches the same "a Note…" pattern when no explicit font size is set but
+        # the run is italic (annotation styling at the default 12pt).
+        if _TABLE_FOOTNOTE_LETTER_MARK_RE.match(text) and sz is None and _first_run_is_italic(para):
+            _set_para_style_val(para, "Table_FootNote")
+            continue
+
+        # 5. Bold/small-caps heading (not all caps — those are handled below)
+        if not text.isupper() and _first_run_is_bold_or_smallcaps(para):
+            _set_para_style_val(para, "Head_SubsectionUnnumbered")
+            continue
+
+        # 6. Enlarged-font heading (not all caps).
+        # Catches paragraphs where the author simply increased the font size above
+        # the 12pt body default (sz=24 half-pts) without applying a Word heading style
+        # or bold/small-caps.  All-caps text is excluded here so it falls through to
+        # the Head_CropName / Head_Section heuristics below.
+        # sz was already fetched above (step 4); call again only if not yet set.
+        if sz is None:
+            sz = _first_run_font_size(para)
+        if sz is not None and sz > 24 and not text.isupper():
+            _set_para_style_val(para, "Head_SubsectionUnnumbered")
+            continue
+
+        # 7 & 8. All-caps section / crop-name headers
+        if text.endswith("."):
+            continue
+
+        # Strip trailing parenthetical "(Zea mays)" before word counting
+        core = _TRAILING_PAREN_RE.sub("", text).strip()
+        if not core or not core.isupper():
+            continue
+
+        words = core.split()
+        if 1 <= len(words) <= 2:
+            _set_para_style_val(para, "Head_CropName")
+        elif len(words) >= 3:
+            _set_para_style_val(para, "Head_Section")
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 2:
         print("Usage: python clean_docx.py INPUT_DOCX")
@@ -447,10 +698,12 @@ def main(argv: list[str]) -> None:
     try:
         doc = Document(source_path)
         _strip_field_codes(doc)
-        _mark_superscripts(doc)       # must run before _strip_character_styles strips rStyle
+        _mark_superscripts(doc)           # must run before _strip_character_styles strips rStyle
+        _infer_paragraph_styles(doc)      # must run before _strip_character_styles strips bold/small-caps
         _strip_character_styles(doc)
         _clean_runs(doc)
         _extract_description_rows(doc)
+        _register_assigned_styles(doc)    # must run before save so styles.xml includes our names
         doc.save(clean_path)
         print(f"Clean file: {clean_path}")
     except Exception as e:

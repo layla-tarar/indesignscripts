@@ -124,9 +124,13 @@
 
                     var result = isApprovalTable(table);
                     if (result.isApproval) {
+                        // Capture highlighted "x" cells BEFORE applying table style —
+                        // TStyle_Approvals can clear fill overrides, so detection must
+                        // happen here while original fills are still on the cells.
+                        var xHighlightCells = captureXHighlightCells(table);
                         table.appliedTableStyle = approvalStyle;
                         // --- Phase 4: Approval detail styling ---
-                        styleApprovalTable(table, acs);
+                        styleApprovalTable(table, acs, xHighlightCells);
                         counts.approvals++;
                     } else {
                         table.appliedTableStyle = simpleStyle;
@@ -309,19 +313,209 @@
     }
 
 
-    // =========================================================================
-    // Phase 4: approval table — fix header row height after text rotation
-    // TStyle_Approvals applies text rotation to header cells; this runs after
-    // the style is applied so InDesign uses the rotated text dimensions when
-    // computing the minimum row height.
-    // =========================================================================
-    function styleApprovalTable(table, styles) {
-        if (table.rows.length === 0) return;
+    // Scan all body "x" cells for fill colors BEFORE the table style is applied.
+    // Returns an array of cell references for cells containing only "x" with a fill.
+    // Must be called before table.appliedTableStyle = approvalStyle.
+    function captureXHighlightCells(table) {
+        var result = [];
         try {
-            var hRow = table.rows[0];
-            hRow.autoGrow = true;
-            hRow.height   = 3; // numeric points (At Least 3pt) — row expands to fit rotated text
+            var cols = table.columns.everyItem().getElements();
+            for (var c = 1; c < cols.length; c++) { // skip col 0 (Crop)
+                var cells = cols[c].cells.everyItem().getElements();
+                for (var i = 1; i < cells.length; i++) { // skip header cell (index 0)
+                    try {
+                        var cell = cells[i];
+                        var txt  = getCellText(cell).toLowerCase().replace(/[^a-z]/g, "");
+                        if (txt === "x" && cellHasFill(cell)) result.push(cell);
+                    } catch(e) {}
+                }
+            }
+        } catch(e) {}
+        return result;
+    }
+
+
+    // =========================================================================
+    // Phase 4: approval table detail styling
+    //
+    // Order of operations (important — later passes override earlier ones):
+    //   1. Header row height   — must be after TStyle_Approvals applies rotation
+    //   2. Re-assert 504pt width — applying the style can reset table width
+    //   3. Header cell styles  — positional (first/last) then content (Event Name)
+    //   4. Column body styles  — Event Name column → CStyle_BodyApproval_Event
+    //   5. Distribute country columns evenly across remaining width
+    //   6. "x" cell overrides  — individual cells, must be AFTER column styles
+    // =========================================================================
+    function styleApprovalTable(table, styles, xHighlightCells) {
+        if (table.rows.length === 0) return;
+
+        var hRow    = table.rows[0];
+        var numCols = hRow.cells.length;
+
+        // ---- ALL CELL STYLING FIRST ----
+        // Structural changes (width, column distribution) come after, because InDesign
+        // can silently reset cell style overrides when table/column geometry is modified.
+
+        // --- A: Header cell styles + locate Event Name column ---
+        // Normalize internal whitespace so "Event\rName" matches as "event name".
+        var eventColIdx = -1;
+
+        for (var c = 0; c < numCols; c++) {
+            try {
+                var hCell = hRow.cells[c];
+                var raw   = getCellText(hCell);
+                var txt   = raw.toLowerCase().replace(/\s+/g, " ");
+
+                if (c === 0)            setCellStyle(hCell, styles.headerCrop);     // CStyle_Header_left
+                if (c === numCols - 1)  setCellStyle(hCell, styles.headerRotRight); // CStyle_HeaderRotatedRight
+                if (txt.indexOf("event name") !== -1) {
+                    setCellStyle(hCell, styles.headerEvent); // CStyle_Header_middle
+                    eventColIdx = c;
+                }
+            } catch(e) {}
+        }
+
+        // --- B: Event Name body column style (first pass) ---
+        // Use column.cells instead of row.cells[idx] to avoid merged-cell index shifting:
+        // when Crop cells span multiple rows, row.cells is shorter and indices shift,
+        // so row.cells[eventColIdx] lands on the wrong cell for rows inside the merge.
+        if (eventColIdx !== -1) {
+            try {
+                var eventColCells = table.columns[eventColIdx].cells.everyItem().getElements();
+                for (var ci = 1; ci < eventColCells.length; ci++) { // ci=0 is the header cell
+                    try { setCellStyle(eventColCells[ci], styles.bodyEvent); } catch(e) {}
+                }
+            } catch(e) {}
+        }
+
+        // --- C: "x" cell overrides (second pass — wins over column styles) ---
+        // Apply bodyX to all "x" cells first, then override with bodyXHighlight for
+        // pre-captured highlighted cells (fills were captured before table style was
+        // applied, since TStyle_Approvals can clear fill overrides).
+        for (var ci = 0; ci < numCols; ci++) {
+            if (ci === 0 || ci === eventColIdx) continue; // skip Crop and Event Name
+            try {
+                var colCells = table.columns[ci].cells.everyItem().getElements();
+                for (var ri = 1; ri < colCells.length; ri++) { // ri=0 is the header cell
+                    try {
+                        var cell    = colCells[ri];
+                        var cellTxt = getCellText(cell).toLowerCase().replace(/[^a-z]/g, "");
+                        if (cellTxt === "x") setCellStyle(cell, styles.bodyX);
+                    } catch(e) {}
+                }
+            } catch(e) {}
+        }
+        // Apply highlight style to cells that had fills before the table style was set.
+        // Clear cell-level overrides after applying so the style's fill wins over any
+        // lingering local fill override that survived table style application.
+        for (var hi = 0; hi < xHighlightCells.length; hi++) {
+            try {
+                var hCell = xHighlightCells[hi];
+                setCellStyle(hCell, styles.bodyXHighlight);
+                // clearOverrides() is unreliable on cell objects; instead, read the fill
+                // directly from the cell style and stamp it onto the cell so the imported
+                // Word fill color (local override) is replaced with the correct value.
+                try {
+                    hCell.fillColor = styles.bodyXHighlight.fillColor;
+                    hCell.fillTint  = styles.bodyXHighlight.fillTint;
+                } catch(e) {}
+            } catch(e) {}
+        }
+
+        // ---- ALL STRUCTURAL CHANGES AFTER CELL STYLING ----
+
+        // --- D: Header row height ---
+        // Crop (col 0) and Event Name are horizontal — exclude from rotated height estimate.
+        try {
+            var neededPt  = calcRotatedTextHeight(hRow, [0, eventColIdx]);
+            hRow.autoGrow = false;
+            hRow.height   = neededPt;
         } catch (e) {}
+
+        // --- E: Re-assert 504pt table width ---
+        setTableFullWidth(table, 504);
+
+        // --- F: Size Crop and Event Name columns to fit their horizontal text ---
+        try { table.columns[0].width = calcColumnWidth(table, 0, 130); } catch(e) {}
+        if (eventColIdx !== -1) {
+            try { table.columns[eventColIdx].width = calcColumnWidth(table, eventColIdx); } catch(e) {}
+        }
+
+        // --- G: Distribute country columns across the remaining width ---
+        distributeCountryColumns(table, 504, 0, eventColIdx);
+    }
+
+    // Estimate the row height needed for 90°-rotated text.
+    // Row height must equal the text's rendered WIDTH (characters become vertical).
+    // skipCols: array of column indices to exclude (non-rotated cells like Crop, Event Name).
+    // Formula: characters × avg-char-width (≈ 0.50 × ptSize) + padding
+    function calcRotatedTextHeight(row, skipCols) {
+        var MIN_HEIGHT = 30; // never shorter than 30pt regardless of content
+        var PADDING    = 8;  // top + bottom breathing room in points
+        var maxPt      = MIN_HEIGHT;
+        skipCols = skipCols || [];
+
+        for (var c = 0; c < row.cells.length; c++) {
+            // Skip columns whose text is horizontal (not rotated)
+            var skip = false;
+            for (var i = 0; i < skipCols.length; i++) {
+                if (skipCols[i] === c) { skip = true; break; }
+            }
+            if (skip) continue;
+
+            try {
+                var paras = row.cells[c].paragraphs;
+                for (var p = 0; p < paras.length; p++) {
+                    var txt = "";
+                    try { txt = paras[p].contents; } catch(e) {}
+                    if (!txt || txt === "\r") continue;
+
+                    var ptSize = 7.5; // Table_Header style: Source Sans Pro Bold 7.5pt
+                    try {
+                        var s = paras[p].pointSize;
+                        if (typeof s === "number" && s > 0) ptSize = s;
+                    } catch(e) {}
+
+                    // avg Latin char width ≈ 0.50 × point size (tuned for Source Sans Pro Bold)
+                    var est = Math.ceil(txt.length * ptSize * 0.50) + PADDING;
+                    if (est > maxPt) maxPt = est;
+                }
+            } catch(e) {}
+        }
+        return maxPt;
+    }
+
+
+    // Estimate the minimum width needed for a column with horizontal (unrotated) text.
+    // Checks every cell in the column (header + body) and returns the widest estimate.
+    // maxWidth: optional upper bound in points (prevents runaway widths from long body cells).
+    function calcColumnWidth(table, colIdx, maxWidth) {
+        var MIN_WIDTH = 20;
+        var PADDING   = 12; // left + right cell padding
+        var maxPt     = MIN_WIDTH;
+
+        for (var r = 0; r < table.rows.length; r++) {
+            try {
+                var row = table.rows[r];
+                if (colIdx >= row.cells.length) continue;
+                var paras = row.cells[colIdx].paragraphs;
+                for (var p = 0; p < paras.length; p++) {
+                    var txt = "";
+                    try { txt = paras[p].contents; } catch(e) {}
+                    if (!txt || txt === "\r") continue;
+
+                    var ptSize = 7.5;
+                    try {
+                        var s = paras[p].pointSize;
+                        if (typeof s === "number" && s > 0) ptSize = s;
+                    } catch(e) {}
+
+                    var est = Math.ceil(txt.length * ptSize * 0.55) + PADDING;
+                    if (est > maxPt) maxPt = est;
+                }
+            } catch(e) {}
+        }
+        return (maxWidth && maxPt > maxWidth) ? maxWidth : maxPt;
     }
 
 
@@ -367,7 +561,24 @@
         try { txt = cell.contents; } catch (e) {}
         if (txt === undefined || txt === null) txt = "";
         if (txt instanceof Array) txt = txt.join(" ");
-        return String(txt).replace(/^\s+|\s+$/g, "");
+        txt = String(txt).replace(/^\s+|\s+$/g, "");
+
+        // cell.contents is unreliable for header-row cells in InDesign —
+        // fall back to reading paragraph text directly.
+        if (txt === "") {
+            try {
+                var paras = cell.paragraphs;
+                var parts = [];
+                for (var p = 0; p < paras.length; p++) {
+                    var pt = "";
+                    try { pt = String(paras[p].contents || ""); } catch(e) {}
+                    pt = pt.replace(/\r/g, "").replace(/^\s+|\s+$/g, "");
+                    if (pt) parts.push(pt);
+                }
+                txt = parts.join(" ");
+            } catch(e) {}
+        }
+        return txt;
     }
 
     function getCellColumnIndex(cell) {

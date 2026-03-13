@@ -54,7 +54,14 @@ Install by copying all `.jsx` files to your InDesign Scripts Panel folder (right
 - Reads `_footnotes.txt` (select it when prompted)
 - Replaces every `{{fn:N}}` marker with a native InDesign footnote populated with the correct text
 - Processes markers in reverse document order to preserve text positions
-- Reports any markers with no matching footnote text (empty/placeholder footnotes)
+- Unmatched markers (no entry in the txt file) are highlighted red using the `Char_UnmatchedMarker` character style (created automatically if absent)
+- Run `FindDeleteEmptyFootnotes.jsx` after layout review to clean them up
+
+#### 3b. `FindDeleteEmptyFootnotes.jsx` *(run after InsertFootnotes, when ready)*
+- Finds all remaining `{{fn:N}}` markers in the document
+- Scrolls to each one and shows surrounding context in a confirmation dialog
+- OK = delete the marker; Cancel = keep it and move to the next
+- Each deletion is a separate undo step
 
 #### 4. `TitleCaseHeadings.jsx`
 - Applies Title Case to all heading paragraph styles
@@ -78,7 +85,8 @@ Phase 2 — InDesign (single column)
   ├─ Run: 2. CleanUp.jsx
   ├─ Run: 3. InsertFootnotes.jsx  (select _footnotes.txt when prompted)
   ├─ Run: 4. TitleCaseHeadings.jsx
-  └─ Manual italic recovery (journal names, Latin terms not in GREP)
+  ├─ Manual italic recovery (journal names, Latin terms not in GREP)
+  └─ Run: FindDeleteEmptyFootnotes.jsx  (when ready to clean up red {{fn:N}} markers)
 
 Phase 3 — Two-column layout & final polish
   ├─ Switch Master B to 2 columns
@@ -93,11 +101,12 @@ Phase 3 — Two-column layout & final polish
 
 ```
 indesignscripts/
-├── clean_docx.py                  # Python pre-processing script
-├── CleanUp.jsx                    # InDesign cleanup (step 2)
-├── InsertFootnotes.jsx            # InDesign footnote insertion (step 3)
-├── TableStyler.jsx                # InDesign table styling (step 1)
-├── TitleCaseHeadings.jsx          # InDesign title case (step 4)
+├── clean_docx.py                    # Python pre-processing script
+├── CleanUp.jsx                      # InDesign cleanup (step 2)
+├── FindDeleteEmptyFootnotes.jsx     # InDesign unmatched marker cleanup (step 3b)
+├── InsertFootnotes.jsx              # InDesign footnote insertion (step 3)
+├── TableStyler.jsx                  # InDesign table styling (step 1)
+├── TitleCaseHeadings.jsx            # InDesign title case (step 4)
 ├── deprecated_scripts/            # Old scripts kept for reference
 └── docs/
     ├── AFSI_Monograph_InDesign_Template_Guide_v12.md  # Full template guide

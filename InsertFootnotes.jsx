@@ -123,7 +123,23 @@
         "InsertFootnotes"
     );
 
-    // --- 5. Report ---
+    // --- 5. Highlight unmatched markers with Char_UnmatchedMarker ---
+    // Applies a red character style so they're visually obvious during layout review.
+    // Run FindDeleteEmptyFootnotes.jsx afterward to step through and delete them.
+    if (missing.length > 0) {
+        var unmatchedStyle = getOrCreateUnmatchedStyle(doc);
+        if (unmatchedStyle) {
+            app.findGrepPreferences  = NothingEnum.nothing;
+            app.changeGrepPreferences = NothingEnum.nothing;
+            app.findGrepPreferences.findWhat              = "\\{\\{fn:(\\d+)\\}\\}";
+            app.changeGrepPreferences.appliedCharacterStyle = unmatchedStyle;
+            doc.changeGrep();
+            app.findGrepPreferences  = NothingEnum.nothing;
+            app.changeGrepPreferences = NothingEnum.nothing;
+        }
+    }
+
+    // --- 6. Report ---
     var msg =
         "InsertFootnotes complete!\n\n" +
         "Entries in txt file: " + fnCount         + "\n" +
@@ -134,8 +150,10 @@
         msg += "\n\nMarkers with no matching txt entry (" + missing.length + "):\n  " +
                missing.slice(0, 10).join("\n  ");
         if (missing.length > 10) {
-            msg += "\n  … and " + (missing.length - 10) + " more";
+            msg += "\n  \u2026 and " + (missing.length - 10) + " more";
         }
+        msg += "\n\nThese markers have been highlighted red (Char_UnmatchedMarker).\n" +
+               "Run FindDeleteEmptyFootnotes.jsx to review and delete them.";
     }
 
     if (errors.length) {
@@ -144,5 +162,33 @@
     }
 
     alert(msg);
+
+
+    // -------------------------------------------------------------------------
+    // Helper: return (or create) the Char_UnmatchedMarker character style.
+    // Creates it with a bright red fill if the style does not yet exist.
+    // -------------------------------------------------------------------------
+    function getOrCreateUnmatchedStyle(doc) {
+        try {
+            var s = doc.characterStyles.itemByName("Char_UnmatchedMarker");
+            if (s.isValid) return s;
+        } catch (e) {}
+        try {
+            var s = doc.characterStyles.add();
+            s.name = "Char_UnmatchedMarker";
+            try {
+                var red = doc.colors.itemByName("Red");
+                if (!red.isValid) {
+                    red = doc.colors.add();
+                    red.name       = "Red";
+                    red.space      = ColorSpace.CMYK;
+                    red.colorValue = [0, 100, 100, 0];
+                }
+                s.fillColor = red;
+            } catch (e2) {}
+            return s;
+        } catch (e) {}
+        return null;
+    }
 
 })();

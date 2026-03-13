@@ -43,7 +43,7 @@
         found.length + " unmatched marker" + (found.length === 1 ? "" : "s") +
         " found.\n\n" +
         "The script will scroll to each one and ask whether to delete it.\n\n" +
-        "OK = begin review\nCancel = exit";
+        "Yes = begin review\nNo = exit";
     if (!confirm(startMsg)) return;
 
     // --- 3. Step through each marker ---
@@ -54,8 +54,18 @@
     for (var i = 0; i < found.length; i++) {
         var match = found[i];
 
-        // Scroll the view to this marker
-        try { doc.select(match); } catch (e) {}
+        // Navigate to the page containing this marker, then select it.
+        // Setting activePage scrolls the window to that spread before the
+        // confirm() dialog appears, so the marker is visible in context.
+        try {
+            var ip          = match.insertionPoints[0];
+            var parentFrame = ip.parentTextFrames[0];
+            var parentPage  = parentFrame.parentPage;
+            if (parentPage && parentPage.isValid) {
+                app.activeWindow.activePage = parentPage;
+            }
+        } catch (e) {}
+        try { app.select(match); } catch (e) {}
 
         var markerText = "";
         try { markerText = match.contents; } catch (e) { markerText = "{{fn:?}}"; }
@@ -65,7 +75,7 @@
         var prompt =
             "Marker " + (i + 1) + " of " + found.length + ":  " + markerText +
             "\n\n" + ctx +
-            "\n\nOK = Delete this marker\nCancel = Keep and continue";
+            "\n\nYes = Delete this marker\nNo = Keep and continue";
 
         if (confirm(prompt)) {
             try {

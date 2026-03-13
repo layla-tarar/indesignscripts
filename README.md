@@ -22,6 +22,7 @@ Produces:
 
 What it does automatically:
 - Marks superscript runs as `{{text}}` and native footnote refs as `{{fn:N}}`
+- Handles repeat references: when the author reuses a footnote number (Word's `customMarkFollows` mechanism with an empty footnote body), the display mark (e.g. `4`) is preserved as a plain superscript `{{4}}` rather than generating a `{{fn:N}}` marker that would be unmatched
 - Strips Word field codes and character-level overrides (preserves italics)
 - Cleans bullet characters (U+2022) and tilde operators (U+223C)
 - Infers InDesign paragraph styles from formatting heuristics (all-caps headings, bold paragraphs, table captions, table footnote markers)
@@ -60,7 +61,7 @@ Install by copying all `.jsx` files to your InDesign Scripts Panel folder (right
 #### 3b. `FindDeleteEmptyFootnotes.jsx` *(run after InsertFootnotes, when ready)*
 - Finds all remaining `{{fn:N}}` markers in the document
 - Scrolls to each one and shows surrounding context in a confirmation dialog
-- OK = delete the marker; Cancel = keep it and move to the next
+- **Yes** = delete the marker; **No** = keep it and move to the next
 - Each deletion is a separate undo step
 
 #### 4. `TitleCaseHeadings.jsx`

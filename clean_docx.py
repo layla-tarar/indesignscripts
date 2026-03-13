@@ -129,20 +129,29 @@ def _mark_superscripts(doc: Document) -> None:
         fn_ref = r_el.find(fn_tag)
         if fn_ref is not None:
             fn_id = fn_ref.get(qn("w:id"), "?")
+            custom_mark_follows = fn_ref.get(qn("w:customMarkFollows"), "0") == "1"
+            # Capture custom mark text BEFORE removing anything.
+            # When customMarkFollows="1", the author-typed display text (e.g. "4")
+            # sits in a <w:t> in the same run as <w:footnoteReference>.
+            existing_texts = [t_el.text for t_el in r_el.findall(qn("w:t")) if t_el.text]
+            custom_mark_text = "".join(existing_texts) if existing_texts else None
             r_el.remove(fn_ref)
             rpr = r_el.find(rpr_tag)
             if rpr is not None:
                 va = rpr.find(va_tag)
                 if va is not None:
                     rpr.remove(va)
-            # Remove any existing <w:t> elements — when customMarkFollows="1" is used,
-            # the author-typed custom mark (e.g. "4") sits in a <w:t> in the same run
-            # as the <w:footnoteReference>.  Without this, the custom mark text leaks
-            # into the output alongside the {{fn:N}} marker.
             for t_el in r_el.findall(qn("w:t")):
                 r_el.remove(t_el)
             t = OxmlElement("w:t")
-            t.text = f"{{{{fn:{fn_id}}}}}"
+            if custom_mark_follows and custom_mark_text:
+                # Repeat reference (e.g. author reused footnote 4 twice more):
+                # emit the display mark as a plain superscript {{4}} so CleanUp.jsx
+                # applies Char_Superscript to it, rather than as {{fn:N}} which would
+                # become an unmatched marker (the referenced footnote body is empty).
+                t.text = f"{{{{{custom_mark_text}}}}}"
+            else:
+                t.text = f"{{{{fn:{fn_id}}}}}"
             r_el.append(t)
             return
 

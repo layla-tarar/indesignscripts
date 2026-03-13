@@ -1,0 +1,17 @@
+We're continuing work on the AFSI monograph InDesign prep scripts. The project is at:
+/Users/laylatarar/Projects/indesignscripts/indesignscripts
+
+Please read HANDOFF_NOTES.md and README.md before we start, so you have the full context.
+
+Quick summary of what the project does:
+- clean_docx.py: Python script that pre-processes Word monograph drafts for InDesign placement. Converts superscripts to {{text}} markers, footnote refs to {{fn:N}}, repeat references (empty-body Word footnotes with customMarkFollows) to plain {{N}} superscripts. Outputs _clean.docx and _footnotes.txt.
+- TableStyler.jsx, CleanUp.jsx, InsertFootnotes.jsx, FindDeleteEmptyFootnotes.jsx, TitleCaseHeadings.jsx: InDesign ExtendScript scripts run in that order after placing _clean.docx.
+
+The workflow is confirmed working for Cry1Ab. The key constraint is CleanUp must run BEFORE InsertFootnotes (otherwise CleanUp's character style clear strips superscript formatting from native footnote reference marks).
+
+The current state of the Cry1Ab document (docs/Cry1Ab_FFS_original_clean.docx) is fully processed through clean_docx.py. The next steps are:
+- Place _clean.docx in InDesign and run the full JSX pipeline
+- Begin Phase 3: two-column layout, table styling, final polish
+- Process the next monograph (Cry1Ac, EPSPS, or PAT/BAR) when ready
+
+Let me know what you'd like to work on.

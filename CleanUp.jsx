@@ -66,6 +66,7 @@ var styleRemap = [
     { from: "Heading 3",                to: "Head_SubSubSectionUnnumbered" },
     { from: "Title",                    to: "Title_Title" },
     { from: "List Paragraph",           to: "Body_BulletL1" },
+    { from: "Table_Header",             to: "Table_Heading" },
 ];
 var remapCount = 0;
 for (var r = 0; r < styleRemap.length; r++) {
@@ -143,6 +144,36 @@ for (var cs = 0; cs < captionStyles.length; cs++) {
     } catch (e) {}
 }
 report.push("Table caption periods → colons: " + captionCount);
+
+// --- 4b. Protein name → gene name when followed by "gene" ---
+// e.g. "Cry1Ab gene" → "cry1Ab gene", "PAT gene" → "pat gene"
+// Uses lookahead so only the protein name is replaced, not the word "gene".
+var proteinToGene = [
+    ["Cry1Ab",    "cry1Ab"],
+    ["Cry1Ac",    "cry1Ac"],
+    ["Cry1Bb",    "cry1Bb"],
+    ["Cry1F",     "cry1F"],
+    ["Cry1Fa",    "cry1Fa"],
+    ["Cry2Ab",    "cry2Ab"],
+    ["Cry2Aa",    "cry2Aa"],
+    ["Cry3Bb1",   "cry3Bb1"],
+    ["Vip3Aa",    "vip3Aa"],
+    ["CP4-EPSPS", "cp4-epsps"],
+    ["CP4 EPSPS", "cp4 epsps"],
+    ["EPSPS",     "epsps"],
+    ["PAT",       "pat"],
+    ["BAR",       "bar"]
+];
+var geneCount = 0;
+for (var g = 0; g < proteinToGene.length; g++) {
+    try {
+        geneCount += doGrepChange(
+            "\\b" + proteinToGene[g][0] + "(?=\\s+gene\\b)",
+            proteinToGene[g][1]
+        );
+    } catch (e) {}
+}
+report.push("Protein \u2192 gene name corrections: " + geneCount);
 
 // --- 5. Superscript {{N}} and {{letter}} markers → Char_Superscript ---
 // Handles: plain numeric markers {{1}}, {{2}} (non-native superscripts)

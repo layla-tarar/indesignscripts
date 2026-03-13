@@ -135,6 +135,12 @@ def _mark_superscripts(doc: Document) -> None:
                 va = rpr.find(va_tag)
                 if va is not None:
                     rpr.remove(va)
+            # Remove any existing <w:t> elements — when customMarkFollows="1" is used,
+            # the author-typed custom mark (e.g. "4") sits in a <w:t> in the same run
+            # as the <w:footnoteReference>.  Without this, the custom mark text leaks
+            # into the output alongside the {{fn:N}} marker.
+            for t_el in r_el.findall(qn("w:t")):
+                r_el.remove(t_el)
             t = OxmlElement("w:t")
             t.text = f"{{{{fn:{fn_id}}}}}"
             r_el.append(t)
@@ -150,6 +156,9 @@ def _mark_superscripts(doc: Document) -> None:
                 va = rpr.find(va_tag)
                 if va is not None:
                     rpr.remove(va)
+            # Same cleanup for endnote custom marks.
+            for t_el in r_el.findall(qn("w:t")):
+                r_el.remove(t_el)
             t = OxmlElement("w:t")
             t.text = f"{{{{en:{en_id}}}}}"
             r_el.append(t)

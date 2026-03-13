@@ -478,7 +478,8 @@
                         if (typeof s === "number" && s > 0) ptSize = s;
                     } catch(e) {}
 
-                    // avg Latin char width ≈ 0.58 × point size (tuned for Source Sans Pro Bold)
+                    // avg Latin char width ≈ 0.58 × point size (tuned for Source Sans Pro Bold;
+                    // sized to fit longer country names like "New Zealand", "European Union")
                     var est = Math.ceil(txt.length * ptSize * 0.58) + PADDING;
                     if (est > maxPt) maxPt = est;
                 }

@@ -67,7 +67,7 @@ def _extract_description_rows(doc: Document) -> None:
         if description is None:
             continue
         # Insert description paragraph immediately before the table,
-        # tagged with Table_Header so InDesign maps it to that paragraph style.
+        # tagged with Table_Heading so InDesign maps it to that paragraph style.
         tbl_el.addprevious(_make_paragraph_element(description, style="Table_Heading"))
         # Remove the first <w:tr> from the table
         first_tr = tbl_el.find(tr_tag)
@@ -567,7 +567,7 @@ def _infer_paragraph_styles(doc: Document) -> None:
     BEFORE _strip_character_styles (needs bold/small-caps XML attributes).
 
     Priority (first match wins; already-assigned paragraphs are skipped):
-      1. Table_Header              — "Table N." or "Table N:"
+      1. Table_Heading              — "Table N." or "Table N:"
       2. Table_FootNote            — starts with {{ but not a {{fn:}} / {{en:}} ref
                                      (superscripted markers converted by _mark_superscripts)
       3. Table_FootNote            — starts with one or more * (literal asterisk markers)
@@ -666,6 +666,33 @@ def _infer_paragraph_styles(doc: Document) -> None:
             _set_para_style_val(para, "Head_Section")
 
 
+def _insert_paragraph_after_tables(doc: Document) -> None:
+    """
+    Insert an empty paragraph after every table in the document body.
+
+    When InDesign places a table from a .docx, it anchors the table inside the
+    paragraph that immediately follows the <w:tbl> in the XML.  If that paragraph
+    is empty, CleanUp.jsx's consecutive-return collapse (\r{2,} → \r) can merge
+    it with the following body-text paragraph.  When that merge happens InDesign
+    may carry the Table_Span style onto the body-text paragraph.
+
+    Adding a guaranteed empty paragraph after every table ensures that even after
+    the collapse there is always an explicit paragraph break separating the table
+    anchor paragraph from the first body-text paragraph that follows.
+    """
+    body = doc.element.body
+    tbl_tag = qn("w:tbl")
+    p_tag   = qn("w:p")
+
+    for child in list(body):
+        if child.tag != tbl_tag:
+            continue
+        # Insert a fresh empty <w:p> immediately after the table.
+        # addnext() inserts as the very next sibling, pushing existing siblings down.
+        empty_p = OxmlElement("w:p")
+        child.addnext(empty_p)
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 2:
         print("Usage: python clean_docx.py INPUT_DOCX")
@@ -703,6 +730,7 @@ def main(argv: list[str]) -> None:
         _strip_character_styles(doc)
         _clean_runs(doc)
         _extract_description_rows(doc)
+        _insert_paragraph_after_tables(doc)  # must run after _extract_description_rows
         _register_assigned_styles(doc)    # must run before save so styles.xml includes our names
         doc.save(clean_path)
         print(f"Clean file: {clean_path}")

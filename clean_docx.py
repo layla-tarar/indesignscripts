@@ -75,17 +75,52 @@ def _extract_description_rows(doc: Document) -> None:
             tbl_el.remove(first_tr)
 
 
+def _get_superscript_style_ids(doc: Document) -> frozenset:
+    """
+    Return a frozenset of character style IDs (w:styleId) whose own rPr defines
+    <w:vertAlign w:val="superscript">.  Only checks the style's direct formatting,
+    not the basedOn chain.  In practice this catches the built-in Word
+    "Footnote Reference" style and any custom superscript character styles.
+    """
+    result: set[str] = set()
+    try:
+        styles_el = doc.styles._element
+        for style_el in styles_el.findall(qn("w:style")):
+            if style_el.get(qn("w:type")) != "character":
+                continue
+            rpr = style_el.find(qn("w:rPr"))
+            if rpr is None:
+                continue
+            va = rpr.find(qn("w:vertAlign"))
+            if va is not None and va.get(qn("w:val")) == "superscript":
+                sid = style_el.get(qn("w:styleId"), "")
+                if sid:
+                    result.add(sid)
+    except Exception:
+        pass
+    return frozenset(result)
+
+
 def _mark_superscripts(doc: Document) -> None:
     """
     Walk every run in the document (body paragraphs and all table cells).
     - Superscript runs: wrap text as {{text}} and remove the superscript property.
     - Footnote references: replace the <w:footnoteReference> element with {{fn:N}}.
     - Endnote references: replace the <w:endnoteReference> element with {{en:N}}.
+    - Character-style superscripts: runs whose character style defines
+      <w:vertAlign w:val="superscript"> (e.g. Word's built-in "Footnote Reference"
+      style used as a manual superscript marker) are also wrapped as {{text}}.
+      Without this, _strip_character_styles would remove the style reference and
+      leave the text as plain unstyled body text.
     """
-    fn_tag = qn("w:footnoteReference")
-    en_tag = qn("w:endnoteReference")
-    va_tag = qn("w:vertAlign")
+    fn_tag  = qn("w:footnoteReference")
+    en_tag  = qn("w:endnoteReference")
+    va_tag  = qn("w:vertAlign")
     rpr_tag = qn("w:rPr")
+
+    # Collect character style IDs that define superscript (e.g. "Footnote Reference").
+    # Captured by the process_run closure below.
+    sup_style_ids = _get_superscript_style_ids(doc)
 
     def process_run(run):
         r_el = run._r
@@ -120,10 +155,23 @@ def _mark_superscripts(doc: Document) -> None:
             r_el.append(t)
             return
 
-        # --- Regular superscript run ---
+        # --- Direct superscript run ---
         if run.font.superscript:
             run.text = f"{{{{{run.text}}}}}"
             run.font.superscript = False
+            return
+
+        # --- Character-style-based superscript ---
+        # run.font.superscript only sees direct <w:vertAlign> on the run; it returns
+        # None when superscript is inherited from a character style.  Check the
+        # applied character style ID against the pre-built set of superscript styles.
+        if sup_style_ids and run.text.strip():
+            rpr = r_el.find(rpr_tag)
+            if rpr is not None:
+                r_style = rpr.find(qn("w:rStyle"))
+                if r_style is not None and r_style.get(qn("w:val"), "") in sup_style_ids:
+                    run.text = f"{{{{{run.text}}}}}"
+                    # Leave w:rStyle in place — _strip_character_styles removes it.
 
     def process_paragraphs(paragraphs):
         for para in paragraphs:

@@ -109,9 +109,25 @@
 
                     if (hasTableSpan) {
                         try {
-                            var parentPara = table.storyOffset.paragraphs[0];
+                            // Use characters[storyOffset.index] to reliably find the
+                            // paragraph containing the table anchor character, rather
+                            // than table.storyOffset.paragraphs[0] which can resolve
+                            // to the wrong paragraph in InDesign 2026.
+                            var anchorIdx = table.storyOffset.index;
+                            var parentPara = stories[s].characters[anchorIdx].paragraphs[0];
                             parentPara.appliedParagraphStyle = tableSpanStyle;
                             counts.spans++;
+                            // If the paragraph also contains text words (table anchor
+                            // and body text share a paragraph), insert a \r right after
+                            // the table anchor (which is at character 0 of the paragraph,
+                            // so insertionPoints[1] is immediately after it).
+                            var paraWordCount = 0;
+                            try { paraWordCount = parentPara.words.length; } catch(e) {}
+                            if (paraWordCount > 0) {
+                                try {
+                                    parentPara.insertionPoints[1].contents = "\r";
+                                } catch(e) {}
+                            }
                         } catch (e) {}
                     }
 

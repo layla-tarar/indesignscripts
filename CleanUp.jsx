@@ -104,6 +104,51 @@ try {
     }
 } catch (e) {}
 
+// Fix Table_Span bleed: paragraphs marked Table_Span that contain no table
+// received the style by mistake (TableStyler applied it to the table's container
+// paragraph, but the table and the following text share the same paragraph when
+// there is no blank line between them in the source Word file).
+// Re-classify each such paragraph using the same heuristics as clean_docx.py:
+//   • starts with {{…}} (not fn/en ref)  → Table_FootNote
+//   • starts with one or more *           → Table_FootNote
+//   • starts with single lowercase + space → Table_FootNote
+//   • otherwise                            → Body_Text
+try {
+    var tsStyle = doc.paragraphStyles.itemByName("Table_Span");
+    var btStyle = doc.paragraphStyles.itemByName("Body_Text");
+    var tfStyle = doc.paragraphStyles.itemByName("Table_FootNote");
+    if (tsStyle.isValid && btStyle.isValid) {
+        var tsStories = doc.stories.everyItem().getElements();
+        var tableSpanFixCount = 0;
+        for (var tss = 0; tss < tsStories.length; tss++) {
+            var tsParas = tsStories[tss].paragraphs.everyItem().getElements();
+            for (var tsp = 0; tsp < tsParas.length; tsp++) {
+                try {
+                    var tsPara = tsParas[tsp];
+                    if (tsPara.appliedParagraphStyle.name !== "Table_Span") continue;
+                    if (tsPara.tables.length > 0) continue; // correct — has a table
+                    var txt = tsPara.contents.replace(/^\s+|\s+$/g, "");
+                    var newStyle = btStyle;
+                    if (tfStyle.isValid) {
+                        if (txt.indexOf("{{") === 0 &&
+                                txt.indexOf("{{fn:") !== 0 &&
+                                txt.indexOf("{{en:") !== 0) {
+                            newStyle = tfStyle;
+                        } else if (/^\*+\s*\S/.test(txt)) {
+                            newStyle = tfStyle;
+                        } else if (/^[a-z] /.test(txt)) {
+                            newStyle = tfStyle;
+                        }
+                    }
+                    tsPara.appliedParagraphStyle = newStyle;
+                    tableSpanFixCount++;
+                } catch (e) {}
+            }
+        }
+        if (tableSpanFixCount > 0) report.push("Table_Span fixed (no table): " + tableSpanFixCount);
+    }
+} catch (e) {}
+
 // Fallback: apply Body_Text to any paragraphs still on [Basic Paragraph]
 // (InDesign assigns [Basic Paragraph] when a placed paragraph has no matching style.)
 try {

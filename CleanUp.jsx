@@ -66,7 +66,6 @@ var styleRemap = [
     { from: "Heading 3",                to: "Head_SubSubSectionUnnumbered" },
     { from: "Title",                    to: "Title_Title" },
     { from: "List Paragraph",           to: "Body_BulletL1" },
-    { from: "Table_Header",             to: "Table_Heading" },
 ];
 var remapCount = 0;
 for (var r = 0; r < styleRemap.length; r++) {
@@ -80,6 +79,30 @@ for (var r = 0; r < styleRemap.length; r++) {
     } catch (e) {}
 }
 report.push("Word paragraph styles remapped + deleted: " + remapCount);
+
+// Targeted remap: Table_Header → Table_Heading (paragraphs only, not child styles)
+// Uses paragraph iteration instead of paragraphStyle.remove() to avoid reparenting
+// any styles that are based on Table_Header.
+try {
+    var tableHeaderStyle  = doc.paragraphStyles.itemByName("Table_Header");
+    var tableHeadingStyle = doc.paragraphStyles.itemByName("Table_Heading");
+    if (tableHeaderStyle.isValid && tableHeadingStyle.isValid) {
+        var thStories = doc.stories.everyItem().getElements();
+        var tableHeaderCount = 0;
+        for (var ths = 0; ths < thStories.length; ths++) {
+            var thParas = thStories[ths].paragraphs.everyItem().getElements();
+            for (var thp = 0; thp < thParas.length; thp++) {
+                try {
+                    if (thParas[thp].appliedParagraphStyle.name === "Table_Header") {
+                        thParas[thp].appliedParagraphStyle = tableHeadingStyle;
+                        tableHeaderCount++;
+                    }
+                } catch (e) {}
+            }
+        }
+        if (tableHeaderCount > 0) report.push("Table_Header \u2192 Table_Heading: " + tableHeaderCount);
+    }
+} catch (e) {}
 
 // Fallback: apply Body_Text to any paragraphs still on [Basic Paragraph]
 // (InDesign assigns [Basic Paragraph] when a placed paragraph has no matching style.)
@@ -96,6 +119,25 @@ try {
     app.findGrepPreferences = NothingEnum.nothing;
     app.changeGrepPreferences = NothingEnum.nothing;
 } catch (e) {}
+
+// --- Pre-0b. Remove unnamed/blank imported character styles ---
+// Word import brings in unnamed or "Unnamed Style,N" character styles that pollute
+// the document. Remove them before the override-clearing pass, replacing any usages
+// with [None] so no text is left referencing a deleted style.
+var noneCharStyle = doc.characterStyles.itemByName("[None]");
+var allCharStyles = doc.characterStyles.everyItem().getElements();
+var unnamedCharCount = 0;
+for (var u = 0; u < allCharStyles.length; u++) {
+    var cStyle = allCharStyles[u];
+    var cName = cStyle.name;
+    if (cName === "" || cName.indexOf("Unnamed Style,") === 0) {
+        try {
+            cStyle.remove(noneCharStyle);
+            unnamedCharCount++;
+        } catch (e) {}
+    }
+}
+report.push("Unnamed/blank character styles removed: " + unnamedCharCount);
 
 // --- 0. Clear character style overrides and local formatting overrides ---
 // Strips character styles and direct run formatting imported from Word

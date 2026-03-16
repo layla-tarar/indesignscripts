@@ -2,22 +2,23 @@
 
 ## What Was Done This Session
 
-### Confirmed Working Workflow
-- Verified `clean_docx.py` output for Cry1Ab: `{{fn:1}}` through `{{fn:4}}` in body text matched by 4 entries in `_footnotes.txt`, `{{4}}` appears twice (repeat references), 2 empty Word footnote entries excluded.
-- Phase 2 (Phase 1 through TitleCaseHeadings.jsx) confirmed working end-to-end for Cry1Ab.
+### Latin term italic recovery added to CleanUp.jsx (step 6)
 
-### SwitchToTwoColumns.jsx — abandoned and deleted
-- Three script approaches all crashed InDesign (SIGSEGV in Text engine during reflow).
-- A fourth approach (one frame at a time, synchronous reflow) completed but InDesign crashed post-script during final redraw.
-- A fifth approach (save after each page, skip already-updated frames) still crashed.
-- **Resolution:** Script automation for this step is not viable. Two-column switch is now done manually: `Cmd+A` per spread, `Cmd+B` (Text Frame Options) → 2 columns, 0.1667" gutter. Fast enough in practice.
-- `SwitchToTwoColumns.jsx` has been deleted from the repo.
+After the override-clearing pass strips all Word character formatting, a new step
+re-applies italic to standard Latin/scientific terms. Four weight-context groups:
 
-### Documentation updated
-- `AFSI_Monograph_InDesign_Template_Guide_v12.md` updated to reflect the current `.docx`-based workflow (replaces old `.txt`-strip approach).
-- Document Footnote Options noted as pre-configured in the `.indt` template.
-- Script names corrected throughout (`CleanupAfterPlacement.jsx` → `CleanUp.jsx`, `ClearTableOverrides.jsx` → `TableStyler.jsx`).
-- Two-column switch updated to reflect the manual approach.
+| Character style | Paragraph styles |
+|---|---|
+| `Char_Italic` | Body_Text, Body_BulletL1, Body_Footnote, Table_Heading |
+| `Char_Regular` | Table_FootNote (fully italic base — terms go roman to contrast) |
+| `Char_SemiboldItalic` | Head_SubsectionNumbered, Head_SubsectionUnnumbered, Head_SubSubSectionUnnumbered |
+| `Char_BoldItalic` | Head_Section |
+
+Terms covered: in vitro, in vivo, in situ, de novo, ex vivo, ad libitum, in planta,
+in silico, sensu stricto, sensu lato, et al., per se, in utero, in ovo.
+
+To add more terms: edit the `latinTerms` array in CleanUp.jsx step 6.
+Journal name italics still require manual recovery.
 
 ---
 
@@ -50,14 +51,16 @@ Phase 3 — Two-column layout & tables (NOT YET DONE for Cry1Ab)
 
 ## Known Remaining Issues / Next Steps
 
-### Immediate — automation improvements (to do in next session)
-1. **Latin term italics in CleanUp.jsx** — add Find/Change → `Char_Italic` for `in vitro`, `in vivo`, `in situ`, `de novo`, `ex vivo`, `ad libitum` etc. Currently requires manual italic recovery.
-2. **Per-monograph term scanner** — extend `clean_docx.py` to emit a `_newterms.txt` report of scientific names, gene names, protein names, event names, and regulatory body abbreviations found in the document that are not in the known lists. Needed before processing Cry1Ac, EPSPS, PAT/BAR.
+### Immediate — automation improvements
+1. **Per-monograph term scanner** — extend `clean_docx.py` to emit a `_newterms.txt`
+   report of scientific names, gene names, protein names, event names, and regulatory
+   body abbreviations found in the document that are not in the known lists.
+   Needed before processing Cry1Ac, EPSPS, PAT/BAR.
 
 ### Layout & content (Cry1Ab Phase 3 not started)
 - **Two-column layout** — manual switch not yet done
 - **Table styling** — TStyle_Simple / TStyle_Approvals not yet applied
-- **Italic recovery** — journal names and Latin terms need manual italic re-application (Latin terms will be partially automated in next session)
+- **Italic recovery** — journal names still need manual italic re-application
 - **TitleCaseHeadings `specificFixes` array** — add new terms found during layout review
 
 ### Other monographs
@@ -70,11 +73,10 @@ Phase 3 — Two-column layout & tables (NOT YET DONE for Cry1Ab)
 | File | Status |
 |---|---|
 | `clean_docx.py` | Working correctly |
-| `CleanUp.jsx` | Unchanged |
+| `CleanUp.jsx` | Updated — Latin italic recovery added (step 6) |
 | `InsertFootnotes.jsx` | Unchanged |
 | `FindDeleteEmptyFootnotes.jsx` | Unchanged |
 | `TableStyler.jsx` | Unchanged |
 | `TitleCaseHeadings.jsx` | Unchanged |
-| `SwitchToTwoColumns.jsx` | **Deleted** — script approach abandoned |
 | `docs/Cry1Ab_FFS_original_clean.docx` | Ready for InDesign placement |
 | `docs/Cry1Ab_FFS_original_footnotes.txt` | 4 entries (fn:1–fn:4) |

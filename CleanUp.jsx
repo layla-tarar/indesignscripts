@@ -24,6 +24,9 @@
 //   5. Superscript {{N}} markers → apply Char_Superscript character style
 //      Handles plain {{N}}, {{letter}}, and in-cell markers like {{a}}, {{b}}.
 //      Does NOT match {{fn:N}} or {{en:N}} — those are native footnote refs.
+//   6. Latin/scientific term italic recovery → apply Char_Italic
+//      (in vitro, in vivo, in situ, de novo, ex vivo, ad libitum, etc.)
+//      Must run AFTER step 0 (override clearing), which strips Word italics.
 
 var doc = app.activeDocument;
 var report = [];
@@ -275,6 +278,74 @@ try {
     report.push("Superscript markers restored: " + supCount);
 } catch (e) {
     report.push("Superscript fix skipped — 'Char_Superscript' character style not found.");
+}
+
+// --- 6. Latin term italic recovery → Char_Italic ---
+// Applies Char_Italic to standard Latin/scientific terms stripped by the
+// override-clearing pass above. Uses (?i) for case-insensitive matching so
+// sentence-initial forms ("In vitro studies...") are also caught.
+// Add additional terms to the latinTerms array as new monographs are processed.
+// Four groups, one per weight context:
+//   Char_Italic         — regular-weight prose (Body_Text, bullets, footnotes, Table_Heading)
+//   Char_Regular        — Table_FootNote (all text is italic there; terms go roman to contrast)
+//   Char_SemiboldItalic — subheadings (semibold base weight)
+//   Char_BoldItalic     — Head_Section (bold base weight)
+var latinTerms = [
+    "in vitro",
+    "in vivo",
+    "in situ",
+    "de novo",
+    "ex vivo",
+    "ad libitum",
+    "in planta",
+    "in silico",
+    "sensu stricto",
+    "sensu lato",
+    "et al\\.",   // escaped dot: avoids matching "et alx"
+    "per se",
+    "in utero",
+    "in ovo"
+];
+var latinStyleGroups = [
+    {
+        charStyle: "Char_Italic",
+        paraStyles: ["Body_Text", "Body_BulletL1", "Body_Footnote", "Table_Heading"]
+    },
+    {
+        charStyle: "Char_Regular",
+        paraStyles: ["Table_FootNote"]
+    },
+    {
+        charStyle: "Char_SemiboldItalic",
+        paraStyles: [
+            "Head_SubsectionNumbered",
+            "Head_SubsectionUnnumbered",
+            "Head_SubSubSectionUnnumbered"
+        ]
+    },
+    {
+        charStyle: "Char_BoldItalic",
+        paraStyles: ["Head_Section"]
+    }
+];
+var italicCount = 0;
+try {
+    for (var lg = 0; lg < latinStyleGroups.length; lg++) {
+        var group = latinStyleGroups[lg];
+        for (var ls = 0; ls < group.paraStyles.length; ls++) {
+            for (var lt = 0; lt < latinTerms.length; lt++) {
+                italicCount += doGrepChange(
+                    "(?i)\\b" + latinTerms[lt] + "\\b",
+                    "$0",
+                    group.paraStyles[ls],
+                    group.charStyle
+                );
+            }
+        }
+    }
+    report.push("Latin terms italicised: " + italicCount);
+} catch (e) {
+    report.push("Latin italic pass skipped — check Char_Italic / Char_Regular / Char_SemiboldItalic / Char_BoldItalic exist.");
 }
 
 // --- Clean up find/change state ---

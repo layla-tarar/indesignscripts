@@ -49,6 +49,7 @@ Install by copying all `.jsx` files to your InDesign Scripts Panel folder (right
 - Clears local formatting overrides (paragraph and character level)
 - Fixes double spaces, extra paragraph returns, and multiplication signs (`x` → `×`)
 - Converts `{{N}}` and `{{letter}}` markers → strips braces, applies `Char_Superscript`
+- Recovers italics on Latin/scientific terms (in vitro, in vivo, in situ, de novo, ex vivo, ad libitum, etc.) stripped by the override-clearing pass — applies the correct character style per paragraph weight context: `Char_Italic` (prose), `Char_Regular` (Table_FootNote, which is fully italic), `Char_SemiboldItalic` (subheadings), `Char_BoldItalic` (Head_Section). To add terms, edit the `latinTerms` array in the script.
 - ⚠️ Must run **before** `InsertFootnotes.jsx` — native InDesign footnotes created by InsertFootnotes cause InDesign's Text engine to crash when CleanUp runs doc-wide text operations
 
 #### 3. `InsertFootnotes.jsx`
@@ -86,7 +87,7 @@ Phase 2 — InDesign (single column)
   ├─ Run: 2. CleanUp.jsx
   ├─ Run: 3. InsertFootnotes.jsx  (select _footnotes.txt when prompted)
   ├─ Run: 4. TitleCaseHeadings.jsx
-  ├─ Manual italic recovery (journal names, Latin terms not in GREP)
+  ├─ Manual italic recovery (journal names; Latin terms now automated via CleanUp.jsx)
   └─ Run: FindDeleteEmptyFootnotes.jsx  (when ready to clean up red {{fn:N}} markers)
 
 Phase 3 — Two-column layout & final polish

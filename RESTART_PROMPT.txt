@@ -11,8 +11,9 @@ The workflow is confirmed working for Cry1Ab through Phase 2.
 
 Two-column layout (Phase 3 Step 1) is done manually: Cmd+A per spread → Cmd+B → 2 columns, 0.1667" gutter. Script automation for this was attempted and abandoned — InDesign crashes during reflow regardless of approach.
 
-Next session goals:
-1. Add Latin term italic recovery to CleanUp.jsx — Find/Change → Char_Italic for: in vitro, in vivo, in situ, de novo, ex vivo, ad libitum (and any others found in the monographs).
-2. Add a per-monograph term scanner to clean_docx.py — scan the .docx and emit a _newterms.txt report listing scientific names, gene names, protein names, event names, and regulatory body abbreviations not already in the known lists. Needed before processing Cry1Ac, EPSPS, PAT/BAR.
+CleanUp.jsx now includes Latin term italic recovery (step 6): applies Char_Italic / Char_Regular / Char_SemiboldItalic / Char_BoldItalic to terms like in vitro, in vivo, in situ, de novo, ex vivo, ad libitum etc., scoped per paragraph style weight. Journal name italics still require manual recovery.
+
+Next session goal:
+1. Add a per-monograph term scanner to clean_docx.py — scan the .docx and emit a _newterms.txt report listing scientific names, gene names, protein names, event names, and regulatory body abbreviations not already in the known lists. Needed before processing Cry1Ac, EPSPS, PAT/BAR.
 
 Let me know what you'd like to work on.

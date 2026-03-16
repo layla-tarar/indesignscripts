@@ -17,37 +17,30 @@ This is a three-phase workflow. Phase 1 preps the text in Word. Phase 2 places c
 
 ---
 
-### Phase 1 — Prepare the text in Word
+### Phase 1 — Prepare the text with clean_docx.py
 
-The Word document contains hidden XML formatting that causes InDesign to crash during recomposition. Instead of fighting overrides, strip all formatting and place clean text.
+Run the Python pre-processing script from the command line:
 
-**Step 1 — Mark superscript text before stripping.**
+```
+python3 clean_docx.py YourMonograph.docx
+```
 
-Your colleagues use manually superscripted numbers (not Word's native footnote system) for shared footnotes, so these will be lost when you strip formatting. Mark them now so you can find them later.
+**Requires:** Python 3, `python-docx` (`pip install python-docx`)
 
-In Word, open Find and Replace (Ctrl+H / Cmd+H):
+This produces two files:
+- `YourMonograph_clean.docx` — place this in InDesign (tables intact, text cleaned)
+- `YourMonograph_footnotes.txt` — footnote key/text pairs for InsertFootnotes.jsx
 
-1. Click in the **Find what** field. Leave it empty. Click **More >>**, then **Format > Font**, check **Superscript**, click OK.
-2. Click in the **Replace with** field. Type: `{{^&}}` — this means "wrap the found text in double curly braces." Click **Format > Font**, uncheck **Superscript**, click OK.
-3. Click **Replace All**.
+What the script does automatically:
+- Converts all superscript runs to `{{text}}` markers (e.g. `{{1}}`, `{{a}}`)
+- Converts native Word footnote references to `{{fn:N}}` markers
+- Handles repeat references: when an author reuses a footnote number via an empty Word footnote, the display mark is preserved as a plain `{{N}}` superscript rather than generating an unmatched `{{fn:N}}`
+- Strips Word field codes and character-level overrides (preserves italics and tables)
+- Cleans bullet characters (U+2022), tilde operators (U+223C), and double spaces
+- Infers InDesign paragraph styles from formatting heuristics (all-caps headings, bold paragraphs, table captions, table footnote markers)
+- Extracts merged description rows from table tops into `Table_Header` paragraphs
 
-Every superscripted character is now wrapped in visible markers: `{{1}}`, `{{2}}`, `{{a}}`, etc. These will survive the plain text export.
-
-**Step 2 — Delete tables, leave markers.**
-
-For each table in the document:
-
-1. Place your cursor on the line immediately above the table (the table heading or caption line).
-2. Type a marker on a new line below the caption: `[INSERT TABLE X HERE]` (where X is the table number).
-3. Select the entire table and delete it.
-
-Leave all table headings, captions, caption sub-notes, and table footnotes in place — only delete the table grid itself. You will paste the tables back from the original Word file in Phase 3.
-
-**Step 3 — Save a working copy as Plain Text.**
-
-File > Save As > Plain Text (.txt). Choose **UTF-8** encoding. This strips all formatting, styles, embedded XML, and hidden junk. The result is pure text with your `{{}}` superscript markers and `[INSERT TABLE X HERE]` placeholders intact.
-
-Keep the original .docx open or accessible — you will copy tables from it in Phase 3.
+Keep the original .docx accessible — you may need it to cross-reference table content during Phase 3.
 
 ---
 
@@ -57,24 +50,17 @@ Work in 1 column for this entire phase. Tables are not present yet.
 
 **Prerequisite:** Verify that InDesign Preferences > Type > Use Typographer's Quotes is enabled before placing.
 
-**Step 1 — Switch Master B to single column.**
+**Step 1 — Verify Master B is set to single column.**
 
-Before placing, change your master page layout to single column: open the **Pages** panel, double-click **Master B** to edit it, select the text frame, then Object > Text Frame Options > Columns: **1**. This ensures all auto-created pages during placement use a single column. You will switch Master B back to 2 columns in Phase 3.
+The template is configured for single-column placement by default. Confirm that Master B has its text frame set to 1 column (Object > Text Frame Options) before placing. You will switch to 2 columns manually in Phase 3.
 
-**Step 2 — Verify Document Footnote Options** (Type > Document Footnote Options):
+**Step 2 — Document Footnote Options are pre-configured in the template.**
 
-- Numbering and Formatting tab:
-  - Footnote Reference Number in Text — Position: **Apply Superscript**, Character Style: **Superscript**
-  - Footnote Formatting — Paragraph Style: **Body_Footnote**, Separator: **^m** (en space)
-- Layout tab:
-  - Minimum Space Before First Footnote: **3pt**
-  - Space Between Footnotes: **3pt**
-  - Allow Split Footnotes: **checked**
-  - Rule Above — First Footnote in Column: **On**, Weight: **0.25pt**, Color: **AFSI Light Gray (#91908F)**, Left Indent: **0**, Width: **100pt**, Offset: **3pt**
+Document Footnote Options (Type > Document Footnote Options) are already set in the `.indt` template file and carry over to any new document created from it. No manual setup needed. For reference, the correct settings are: Apply Superscript position, `Body_Footnote` paragraph style, `^m` separator, 3pt spacing, 0.25pt AFSI Light Gray rule at 100pt width.
 
-**Step 3 — Place the .txt file.**
+**Step 3 — Place _clean.docx.**
 
-File > Place, select the .txt file. Your cursor becomes a loaded text icon. **Hold Shift and click** on the first page's text frame — this is autoflow. InDesign will automatically create new pages (based on your master page) and add threaded text frames until all the text is placed. No overset, no manual page creation. The text comes in completely clean — no overrides, no hidden formatting, no XML junk.
+File > Place, select `YourMonograph_clean.docx`. Your cursor becomes a loaded text icon. **Hold Shift and click** on the first page's text frame — this is autoflow. InDesign will automatically create new pages (based on Master B) and add threaded text frames until all the text is placed. No overset, no manual page creation. Tables are included in the placed file.
 
 **Step 4 — Apply Body_text to everything.**
 
@@ -98,33 +84,27 @@ Walk through the document and apply the correct paragraph style to each heading.
 
 **Step 6 — Find/Change operations.**
 
-**Part A — Create native footnotes first (manual):**
+**Part A — Run CleanUp.jsx:**
 
-The stripped text places all footnote content at the end of the document (since footnotes are just regular text after stripping). Before running the cleanup script, create native footnotes for first occurrences:
+File > Scripts > Scripts Panel, double-click **CleanUp.jsx**. The script runs all Find/Change operations in sequence:
 
-For each footnote number (1, 2, 3, 4, etc.):
-1. Find the footnote text at the end of the document (e.g., `{{1}} GE crops are crops that have been modified...`). Copy the text (without the `{{1}}` prefix).
-2. Use Edit > Find/Change (GREP tab). Find: `\{\{1\}\}` (use the specific number, not `\d+`). Click **Find Next** to jump to the **first** occurrence in the body text.
-3. Delete `{{1}}` at that location, then Type > Insert Footnote. Paste the footnote text into the footnote area.
-4. Repeat for {{2}}, {{3}}, {{4}}, etc.
-5. Delete the block of footnote text at the end of the document once all native footnotes are created.
-6. **Footnotes with no content** (the Cry1Ab draft has empty footnotes [5] and [6]): Flag these and confirm with colleagues whether they need content or removal.
+1. Removes unnamed/blank imported character styles and replaces usages with `[None]`
+2. Remaps imported Word paragraph styles → InDesign template styles (e.g., Normal → Body_Text, Heading 1 → Head_Section)
+3. Clears local formatting overrides
+4. Double spaces → single space
+5. Extra paragraph returns → single return
+6. Strip bullet characters (`•` at start of paragraphs)
+7. Tilde operator → standard tilde (`\x{223C}` → `~`)
+8. Multiplication signs in stacked event names (`x` → `×`)
+9. Converts `{{N}}` and `{{letter}}` markers → strips braces, applies `Char_Superscript`
 
-**Part B — Run the CleanupAfterPlacement.jsx script:**
+⚠️ **CleanUp.jsx must run before InsertFootnotes.jsx.** Running CleanUp after native footnotes have been inserted causes InDesign's text engine to crash during doc-wide text operations.
 
-File > Scripts > Scripts Panel, double-click **CleanupAfterPlacement.jsx**. The script runs all Find/Change operations in sequence:
+**Part B — Run InsertFootnotes.jsx:**
 
-1. Double spaces → single space (` {2,}`, not `\s{2,}`)
-2. Extra paragraph returns → single return (`\r{2,}` → `\r`)
-3. Strip bullet characters (`• ` at start of paragraphs)
-4. Tilde operator → standard tilde (`\x{223C}` → `~`)
-5. Multiplication signs in stacked event names (`x` → `×`)
-6. "Table N." → "Table N:" (scoped to Table_Heading paragraphs)
-7. Superscript remaining `{{}}` markers → strips braces, applies Char_Superscript
+File > Scripts > Scripts Panel, double-click **InsertFootnotes.jsx**. When prompted, select the `_footnotes.txt` file produced by `clean_docx.py`. The script replaces every `{{fn:N}}` marker in the text with a native InDesign footnote populated with the correct text, processed in reverse document order to preserve text positions.
 
-The script reports how many changes it made for each operation. If you accidentally run Part B before Part A, undo (Cmd+Z) to revert the superscript step, create the native footnotes, then run the script again.
-
-To install: copy CleanupAfterPlacement.jsx to your InDesign Scripts Panel folder (same location as TitleCaseHeadings.jsx).
+Unmatched markers (no entry in the txt file) are highlighted red using `Char_UnmatchedMarker`. Run **FindDeleteEmptyFootnotes.jsx** after layout review to review and clean these up one by one.
 - [ ] **Title case headings.** Run the **TitleCaseHeadings.jsx** script: File > Scripts > Scripts Panel, navigate to the script, and double-click. The script does three things automatically: (1) applies Title Case to all paragraphs with heading styles, (2) lowercases articles, prepositions, and conjunctions that shouldn't be capitalized (a, an, and, as, at, but, by, for, from, in, into, nor, of, on, or, so, the, to, up, via, with, yet) unless they're the first word, and (3) fixes specific terms like "Ge" → "GE". To install the script, copy TitleCaseHeadings.jsx to your InDesign Scripts Panel folder (find it by right-clicking the "User" folder in the Scripts panel and choosing "Reveal in Finder"). To add more term fixes, edit the `specificFixes` array in the script.
 - [ ] **Review title case results.** The script handles most cases, but do a quick scan for: scientific terms that Title Case may have broken (e.g., "Cry1ab" should be "Cry1Ab"), other abbreviations that need ALL CAPS, and any edge cases the script missed.
 
@@ -153,7 +133,14 @@ Tables are the primary crash culprit in InDesign, so this phase switches to two 
 
 **Step 1 — Switch to two columns.**
 
-In the **Pages** panel, double-click **Master B** to edit it. Select the text frame, then Object > Text Frame Options > Columns: **2**, Gutter: **0.1667"** (1 pica). Return to the document pages — all pages based on Master B will reflow into the two-column layout.
+Do this manually, spread by spread — do not use a script (scripted column switching crashes InDesign's text engine during reflow):
+
+1. Navigate to each spread from page 2 onward.
+2. `Cmd+A` to select all objects on the spread.
+3. `Cmd+B` (Text Frame Options) → Columns: **2**, Gutter: **0.1667"** (1 pica) → OK.
+4. Repeat for each spread.
+
+This is a few keystrokes per spread and is more reliable than any scripted approach.
 
 **Step 2 — Adjust pagination.**
 
@@ -177,13 +164,15 @@ Paste all tables into this staging area before running the scripts.
 
 **Step 4 — Run scripts and apply table styles.**
 
-1. Run **ClearTableOverrides.jsx** (File > Scripts > Scripts Panel). The script processes every table automatically:
+1. Run **TableStyler.jsx** (File > Scripts > Scripts Panel). The script processes every table automatically:
    - Clears all table, cell, and paragraph style overrides
    - Converts the first row of each table to a header row
    - Sets all row heights to "At Least" 3pt so rows expand to fit content
    - Applies Table_Span to each table's paragraph
 
-2. Run **CleanupAfterPlacement.jsx** to clean up any double spaces, extra returns, tilde operators, or other junk within cell text.
+   Note: TableStyler.jsx was already run in Phase 2 on the tables placed from _clean.docx. If you are pasting additional tables from Word into a staging area, run it again after pasting.
+
+2. Run **CleanUp.jsx** to clean up any double spaces, extra returns, tilde operators, or other junk within cell text.
 
 3. Manually apply styles to each table:
    - Apply the table style: **TStyle_Simple** or **TStyle_Approvals** (or variant).

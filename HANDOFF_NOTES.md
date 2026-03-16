@@ -1,55 +1,67 @@
-# Handoff Notes — March 13, 2026
+# Handoff Notes — March 16, 2026
 
 ## What Was Done This Session
 
-### New scripts
-- **`FindDeleteEmptyFootnotes.jsx`** — step-through cleanup for unmatched `{{fn:N}}` markers left after `InsertFootnotes.jsx`. Scrolls to each marker in the document view, shows ~60 characters of surrounding context, and asks **Yes** (delete) / **No** (keep and continue). Each deletion is a separate undo step.
+### Confirmed Working Workflow
+- Verified `clean_docx.py` output for Cry1Ab: `{{fn:1}}` through `{{fn:4}}` in body text matched by 4 entries in `_footnotes.txt`, `{{4}}` appears twice (repeat references), 2 empty Word footnote entries excluded.
+- Phase 2 (Phase 1 through TitleCaseHeadings.jsx) confirmed working end-to-end for Cry1Ab.
 
-### Changes to `InsertFootnotes.jsx`
-- After inserting matched footnotes, unmatched markers are now highlighted red automatically using a `Char_UnmatchedMarker` character style (created if absent: CMYK red). The end-of-script report tells you to run `FindDeleteEmptyFootnotes.jsx` to review them.
+### SwitchToTwoColumns.jsx — abandoned and deleted
+- Three script approaches all crashed InDesign (SIGSEGV in Text engine during reflow).
+- A fourth approach (one frame at a time, synchronous reflow) completed but InDesign crashed post-script during final redraw.
+- A fifth approach (save after each page, skip already-updated frames) still crashed.
+- **Resolution:** Script automation for this step is not viable. Two-column switch is now done manually: `Cmd+A` per spread, `Cmd+B` (Text Frame Options) → 2 columns, 0.1667" gutter. Fast enough in practice.
+- `SwitchToTwoColumns.jsx` has been deleted from the repo.
 
-### Changes to `clean_docx.py`
-Three fixes, all in `_mark_superscripts` / `process_run()`:
-
-1. **Repeat-reference ("fake footnote") handling** — When Word uses `customMarkFollows="1"` (author reuses a footnote number by creating an empty footnote body and typing a custom mark like "4"), the script now emits `{{4}}` (plain superscript) instead of `{{fn:5}}` (which would become an unmatched red marker in InDesign because the footnote body is empty). `CleanUp.jsx` then converts `{{4}}` → superscripted `4` via `Char_Superscript`.
-
-2. **Character-style superscript detection** — Added `_get_superscript_style_ids()` which scans `styles.xml` for character styles that define `vertAlign=superscript` (catches Word's built-in "Footnote Reference" style). Runs using that style that weren't caught by `run.font.superscript` are now wrapped as `{{text}}`. This prevents `_strip_character_styles` from silently stripping them back to plain text.
-
-3. **Custom mark text leak fix** — When `customMarkFollows="1"`, the custom mark text ("4") was previously left behind in the run alongside `{{fn:N}}`, producing "4{{fn:5}}" in output. This was fixed in the same session by removing all `<w:t>` elements before appending the new marker text.
-
-### `README.md`
-- Added note about repeat-reference handling to the `clean_docx.py` description.
-- Corrected `FindDeleteEmptyFootnotes.jsx` button labels from "OK/Cancel" to "Yes/No" (that is how InDesign renders `confirm()` dialogs).
+### Documentation updated
+- `AFSI_Monograph_InDesign_Template_Guide_v12.md` updated to reflect the current `.docx`-based workflow (replaces old `.txt`-strip approach).
+- Document Footnote Options noted as pre-configured in the `.indt` template.
+- Script names corrected throughout (`CleanupAfterPlacement.jsx` → `CleanUp.jsx`, `ClearTableOverrides.jsx` → `TableStyler.jsx`).
+- Two-column switch updated to reflect the manual approach.
 
 ---
 
 ## Confirmed Working Workflow
 
 ```
-Phase 1 — python clean_docx.py YourMonograph.docx
+Phase 1 — python3 clean_docx.py YourMonograph.docx
   → YourMonograph_clean.docx
   → YourMonograph_footnotes.txt
 
-Phase 2 — InDesign
-  1. Place _clean.docx (Shift+click for autoflow)
-  2. TableStyler.jsx
-  3. CleanUp.jsx          ← MUST come before InsertFootnotes
-  4. InsertFootnotes.jsx  (select _footnotes.txt when prompted)
-  5. TitleCaseHeadings.jsx
-  6. FindDeleteEmptyFootnotes.jsx  (when ready to clean up red markers)
+Phase 2 — InDesign (single column)
+  1. Verify Master B is 1 column
+  2. Place _clean.docx (Shift+click for autoflow)
+  3. TableStyler.jsx
+  4. CleanUp.jsx          ← MUST come before InsertFootnotes
+  5. InsertFootnotes.jsx  (select _footnotes.txt when prompted)
+  6. TitleCaseHeadings.jsx
+  7. FindDeleteEmptyFootnotes.jsx  (when ready to clean up red markers)
+
+Phase 3 — Two-column layout & tables (NOT YET DONE for Cry1Ab)
+  1. Switch to 2 columns: Cmd+A per spread → Cmd+B → 2 cols, 0.1667" gutter
+  2. Pagination pass (breaks, widows/orphans)
+  3. Apply table styles (TStyle_Simple / TStyle_Approvals + cell/edge styles)
+  4. Final layout polish
 ```
 
-**Critical order constraint:** CleanUp must run **before** InsertFootnotes. If you run CleanUp after InsertFootnotes, its doc-wide `.+` GREP operation (step 0, clearing unnamed char styles) strips the "Footnote Reference" character style from native InDesign footnote reference marks, making them unsuperscripted.
+**Critical order constraint:** CleanUp must run **before** InsertFootnotes.
 
 ---
 
 ## Known Remaining Issues / Next Steps
 
-- **Italic recovery** — journal names and Latin terms still need manual italic re-application after the workflow. This is expected and unchanged.
-- **Two-column layout** — Phase 3 (switch Master B to 2 columns, adjust pagination, apply table styles) has not been started for Cry1Ab yet.
-- **TitleCaseHeadings `specificFixes` array** — add any new terms discovered during layout review (e.g. protein names, abbreviations) to keep Title Case corrections up to date.
-- **Other monographs** — Cry1Ac, EPSPS, PAT/BAR have not been processed yet. The pipeline is ready; just run `clean_docx.py` on each source `.docx` and follow the workflow.
-- **footnotes.txt format note** — `export_footnotes_txt` writes only footnotes with non-empty body text. Repeat-reference entries (empty footnote bodies, fn:5 and fn:6 in Cry1Ab) are intentionally excluded. This is correct behavior.
+### Immediate — automation improvements (to do in next session)
+1. **Latin term italics in CleanUp.jsx** — add Find/Change → `Char_Italic` for `in vitro`, `in vivo`, `in situ`, `de novo`, `ex vivo`, `ad libitum` etc. Currently requires manual italic recovery.
+2. **Per-monograph term scanner** — extend `clean_docx.py` to emit a `_newterms.txt` report of scientific names, gene names, protein names, event names, and regulatory body abbreviations found in the document that are not in the known lists. Needed before processing Cry1Ac, EPSPS, PAT/BAR.
+
+### Layout & content (Cry1Ab Phase 3 not started)
+- **Two-column layout** — manual switch not yet done
+- **Table styling** — TStyle_Simple / TStyle_Approvals not yet applied
+- **Italic recovery** — journal names and Latin terms need manual italic re-application (Latin terms will be partially automated in next session)
+- **TitleCaseHeadings `specificFixes` array** — add new terms found during layout review
+
+### Other monographs
+- Cry1Ac, EPSPS, PAT/BAR not yet processed
 
 ---
 
@@ -57,12 +69,12 @@ Phase 2 — InDesign
 
 | File | Status |
 |---|---|
-| `clean_docx.py` | Updated (all three fixes above) |
-| `InsertFootnotes.jsx` | Updated (unmatched marker highlighting) |
-| `FindDeleteEmptyFootnotes.jsx` | New |
-| `TableStyler.jsx` | Unchanged |
+| `clean_docx.py` | Working correctly |
 | `CleanUp.jsx` | Unchanged |
+| `InsertFootnotes.jsx` | Unchanged |
+| `FindDeleteEmptyFootnotes.jsx` | Unchanged |
+| `TableStyler.jsx` | Unchanged |
 | `TitleCaseHeadings.jsx` | Unchanged |
-| `docs/Cry1Ab_FFS_original_clean.docx` | Regenerated with latest fixes |
-| `docs/Cry1Ab_FFS_original_footnotes.txt` | 4 entries (fn:1–fn:4); repeat refs excluded |
-| `docs/Cry1Ab_FFS_original_footnotes.docx` | Regenerated |
+| `SwitchToTwoColumns.jsx` | **Deleted** — script approach abandoned |
+| `docs/Cry1Ab_FFS_original_clean.docx` | Ready for InDesign placement |
+| `docs/Cry1Ab_FFS_original_footnotes.txt` | 4 entries (fn:1–fn:4) |

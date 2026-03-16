@@ -732,6 +732,306 @@ def _infer_paragraph_styles(doc: Document) -> None:
             _set_para_style_val(para, "Head_Section")
 
 
+# ---------------------------------------------------------------------------
+# Per-monograph new-term scanner
+# ---------------------------------------------------------------------------
+
+# Latin terms already handled by CleanUp.jsx — omit from all scan categories.
+_KNOWN_LATIN = frozenset({
+    "in vitro", "in vivo", "in situ", "de novo", "ex vivo", "ad libitum",
+    "in planta", "in silico", "sensu stricto", "sensu lato",
+    "et al", "et al.", "per se", "in utero", "in ovo",
+})
+
+# Scientific names (binomial + abbreviated genus) already seen — lowercase.
+_KNOWN_SCI_NAMES = frozenset({
+    "bacillus thuringiensis", "bacillus thuringiensis var. kurstaki",
+    "bacillus thuringiensis subsp. kurstaki",
+    "zea mays", "glycine max", "brassica napus", "gossypium hirsutum",
+    "oryza sativa", "solanum tuberosum", "arabidopsis thaliana",
+    "nicotiana tabacum", "saccharomyces cerevisiae", "escherichia coli",
+    "helicoverpa armigera", "helicoverpa zea",
+    "spodoptera exigua", "spodoptera frugiperda",
+    "manduca sexta", "ostrinia nubilalis",
+    "bombyx mori", "plutella xylostella",
+    "diatraea saccharalis", "agrotis ipsilon",
+    # abbreviated genus forms
+    "b. thuringiensis", "e. coli", "z. mays",
+})
+
+# Gene names already seen (lowercase for comparison).
+_KNOWN_GENE_NAMES = frozenset({
+    "cry1ab", "cry1ac", "cry1a", "cry1b", "cry1c", "cry1d", "cry1e", "cry1f",
+    "cry2ab", "cry2ae", "cry2a",
+    "cry3bb", "cry3a", "cry3b",
+    "cry34ab1", "cry35ab1",
+    "cry9c",
+    "epsps", "bar", "pat", "gat",
+    "nptii", "aad", "gus", "hpt",
+    "vip3a", "vip3aa", "vip3ab",
+})
+
+# Protein names already seen (lowercase for comparison).
+_KNOWN_PROTEIN_NAMES = frozenset({
+    "cry1ab", "cry1ac", "cry2ab", "cry3bb", "cry1f",
+    "cry34ab1", "cry35ab1",
+    "epsps", "cp4 epsps", "bar", "pat",
+    "vip3a", "vip3aa",
+})
+
+# Regulatory transformation event names already seen (lowercase).
+_KNOWN_EVENT_NAMES = frozenset({
+    "mon810", "mon863", "mon87701", "mon89034", "mon87460",
+    "nk603", "ga21",
+    "t25", "ll62",
+    "bt11", "bt176",
+    "mir162", "mir604",
+    "das-44406-6", "das-59122-7",
+    "syn-e3272-5", "syn-ir102-7",
+    "mzir098", "smg-00355-3",
+})
+
+# Common abbreviations to suppress in the regulatory abbreviation scan.
+_KNOWN_REG_ABBREVS = frozenset({
+    # Countries / regions
+    "us", "eu", "uk", "un", "ca", "jp", "au", "nz", "br",
+    # Regulatory bodies
+    "fao", "who", "epa", "fda", "usda", "efsa", "oecd", "codex",
+    "aphis", "ec", "echa", "cfia", "fsanz", "bfr", "rivm", "anses",
+    # Molecular biology
+    "dna", "rna", "mrna", "rrna", "trna", "dsrna", "sirna", "rnai", "cdna",
+    "pcr", "qpcr", "elisa", "hplc", "sds",
+    # Dose/safety metrics
+    "lc50", "ld50", "noec", "noael", "loael", "loec", "bw", "adi", "arfd", "tdi",
+    "auc", "gras",
+    # Units
+    "bp", "kb", "mb", "kda", "da", "ppm", "ppb", "ppt", "mg", "kg", "ng",
+    # Project / document
+    "ffs", "afsi", "gmo", "lmo", "gm", "ge", "bt",
+    # GLP / GMP / regulatory documents
+    "glp", "gmp", "gcp", "sop",
+    # International agreements
+    "ippc", "cbd", "cpb",
+    # Other common bio terms
+    "cas", "ntp",
+    # Combined-form country+agency tokens
+    "usepa", "usfda",
+    # Molecular biology terms common in safety dossiers
+    "utr", "ssu", "lsu", "orf", "snp", "ssr", "indel",
+    # In vitro digestion / safety-study abbreviations
+    "sgf", "sif", "bsa",
+    # Roman numerals (appear in section numbering and table entries)
+    "iii", "vii", "viii", "xii", "xiii", "xiv", "xvi",
+})
+
+# --- Regex patterns ---
+
+# Binomial: "Bacillus thuringiensis", "Spodoptera frugiperda"
+# Require species epithet ≥6 chars to avoid matching common English words.
+_BINOMIAL_RE     = re.compile(r'\b([A-Z][a-z]{2,})\s+([a-z]{6,})\b')
+# Abbreviated genus: "B. thuringiensis"
+_ABBREV_GENUS_RE = re.compile(r'\b([A-Z])\.\s+([a-z]{3,})\b')
+# Gene name token from italic text: cry1Ab, epsps, bar, nptII
+_GENE_TOKEN_RE   = re.compile(r'\b([a-z]{2,5}\d[A-Za-z0-9]*)\b')
+# Cry / Vip protein names in full text.
+# Cap alpha suffix at 5 chars so the word-boundary check blocks
+# false matches like "Cry1AbProtein" (no \b mid-word).
+_CRY_PROTEIN_RE  = re.compile(
+    r'\b(Cry\d+[A-Za-z]{1,5}\d*|Vip\d+[A-Za-z]{1,5}\d*)\b'
+)
+# Regulatory event names (conservative prefixes only)
+_EVENT_RE = re.compile(
+    r'\b('
+    r'MON\d{2,}'                       # MON810, MON87701
+    r'|NK\d{2,}'                       # NK603
+    r'|GA\d{2,}'                       # GA21
+    r'|MIR\d{2,}'                      # MIR162, MIR604
+    r'|LL\d{2,}'                       # LL62
+    r'|Bt\d{2,}'                       # Bt11, Bt176
+    r'|T\d{2}'                         # T25 (2-digit avoids T1/T2 timepoint refs)
+    r'|[A-Z]{2,5}-\d{4,}(?:-\d+)+'    # DAS-44406-6
+    r'|[A-Z]{2,5}-[A-Z]\d{3,}-\d'     # SYN-E3272-5
+    r')\b'
+)
+# All-caps abbreviations 3–6 chars for regulatory body scan
+_REG_ABBREV_RE = re.compile(r'\b([A-Z]{3,6})\b')
+
+
+def _iter_all_paragraphs(doc: Document):
+    """Yield all paragraphs from body paragraphs and table cells."""
+    yield from doc.paragraphs
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                yield from cell.paragraphs
+
+
+def _collect_italic_spans(doc: Document) -> list[str]:
+    """
+    Return text spans built by joining consecutive italic runs within each
+    paragraph.  Used to detect scientific names and gene names before
+    _strip_character_styles removes italic markup.
+    """
+    i_tag   = qn("w:i")
+    rpr_tag = qn("w:rPr")
+    spans: list[str] = []
+
+    for para in _iter_all_paragraphs(doc):
+        current: list[str] = []
+        for run in para.runs:
+            rpr    = run._r.find(rpr_tag)
+            italic = False
+            if rpr is not None:
+                i_el = rpr.find(i_tag)
+                if i_el is not None and i_el.get(qn("w:val"), "true") not in ("false", "0"):
+                    italic = True
+            if italic and run.text:
+                current.append(run.text)
+            else:
+                if current:
+                    span = "".join(current).strip()
+                    if span:
+                        spans.append(span)
+                    current = []
+        if current:
+            span = "".join(current).strip()
+            if span:
+                spans.append(span)
+
+    return spans
+
+
+def _collect_body_texts(doc: Document) -> list[str]:
+    """Return paragraph text strings, skipping all-caps heading paragraphs."""
+    return [
+        para.text.strip()
+        for para in _iter_all_paragraphs(doc)
+        if para.text.strip() and not para.text.strip().isupper()
+    ]
+
+
+def scan_new_terms(source_path: str) -> dict[str, list[str]]:
+    """
+    Scan the original .docx for candidate new terms not in the known lists.
+    Must be called on the unmodified source so italic markup is still present.
+    Returns: { category_name: sorted list of candidate strings }
+    """
+    doc = Document(source_path)
+
+    italic_spans  = _collect_italic_spans(doc)
+    body_texts    = _collect_body_texts(doc)
+    italic_joined = " | ".join(italic_spans)
+    body_joined   = "\n".join(body_texts)
+
+    # Full text for protein / event scanning (body + footnotes plain text)
+    full_text = body_joined
+    try:
+        part      = doc.part.part_related_by(_FOOTNOTES_REL)
+        part_xml  = etree.fromstring(part.blob)
+        fn_tag    = qn("w:footnote")
+        t_tag     = qn("w:t")
+        type_attr = qn("w:type")
+        for note in part_xml.findall(fn_tag):
+            if note.get(type_attr) in _SKIP_FOOTNOTE_TYPES:
+                continue
+            for t_el in note.findall(".//" + t_tag):
+                if t_el.text:
+                    full_text += "\n" + t_el.text
+    except Exception:
+        pass
+
+    # 1. Scientific names — from italic spans only (reduces false positives)
+    # Additional guard: skip if the first word is a common English non-genus word
+    # (catches e.g. "Values represent", "Results indicate" from table footnotes).
+    _NON_GENUS = frozenset({
+        "values", "results", "table", "figure", "note", "these", "those",
+        "when", "which", "where", "data", "mean", "means", "each", "both",
+        "percent", "percentage", "numbers", "based", "given", "shown",
+        "using", "used", "total", "average",
+    })
+    new_sci: set[str] = set()
+    for m in _BINOMIAL_RE.finditer(italic_joined):
+        if m.group(1).lower() in _NON_GENUS:
+            continue
+        term = f"{m.group(1)} {m.group(2)}"
+        low  = term.lower()
+        if low not in _KNOWN_SCI_NAMES and low not in _KNOWN_LATIN:
+            new_sci.add(term)
+    for m in _ABBREV_GENUS_RE.finditer(italic_joined):
+        term = f"{m.group(1)}. {m.group(2)}"
+        if term.lower() not in _KNOWN_SCI_NAMES:
+            new_sci.add(term)
+
+    # 2. Gene names — from italic spans, lowercase pattern
+    new_genes: set[str] = set()
+    for span in italic_spans:
+        for m in _GENE_TOKEN_RE.finditer(span):
+            cand = m.group(1)
+            if cand.lower() not in _KNOWN_GENE_NAMES and cand.lower() not in _KNOWN_LATIN:
+                new_genes.add(cand)
+
+    # 3. Protein names — Cry/Vip pattern from full text
+    new_proteins: set[str] = set()
+    for m in _CRY_PROTEIN_RE.finditer(full_text):
+        cand = m.group(1)
+        if cand.lower() not in _KNOWN_PROTEIN_NAMES:
+            new_proteins.add(cand)
+
+    # 4. Event names — conservative prefix patterns from full text
+    new_events: set[str] = set()
+    for m in _EVENT_RE.finditer(full_text):
+        cand = m.group(1)
+        if cand.lower() not in _KNOWN_EVENT_NAMES:
+            new_events.add(cand)
+
+    # 5. Regulatory abbreviations — all-caps 3–6 chars, ≥2 occurrences in
+    #    mixed-case body text (skips all-caps heading paragraphs already filtered
+    #    by _collect_body_texts)
+    abbrev_counts: dict[str, int] = {}
+    for m in _REG_ABBREV_RE.finditer(body_joined):
+        cand = m.group(1)
+        if cand.lower() not in _KNOWN_REG_ABBREVS:
+            abbrev_counts[cand] = abbrev_counts.get(cand, 0) + 1
+    new_abbrevs: set[str] = {a for a, cnt in abbrev_counts.items() if cnt >= 2}
+
+    return {
+        "Scientific Names":         sorted(new_sci),
+        "Gene Names":               sorted(new_genes),
+        "Protein Names":            sorted(new_proteins),
+        "Event Names":              sorted(new_events),
+        "Regulatory Abbreviations": sorted(new_abbrevs),
+    }
+
+
+def export_newterms_txt(
+    terms: dict[str, list[str]],
+    output_path: str,
+    source_name: str = "",
+) -> int:
+    """
+    Write _newterms.txt report.  Returns total number of candidate terms.
+    """
+    total = sum(len(v) for v in terms.values())
+    with open(output_path, "w", encoding="utf-8") as fh:
+        header = "# New term candidates"
+        if source_name:
+            header += f" — {source_name}"
+        fh.write(header + "\n")
+        fh.write(
+            "# Review each section.  Confirmed terms should be added to the\n"
+            "# known lists in clean_docx.py, and to latinTerms / specificFixes\n"
+            "# in CleanUp.jsx / TitleCaseHeadings.jsx as appropriate.\n"
+        )
+        for category, term_list in terms.items():
+            fh.write(f"\n=== {category} ===\n")
+            if term_list:
+                for t in term_list:
+                    fh.write(f"  {t}\n")
+            else:
+                fh.write("  (none found)\n")
+    return total
+
+
 def main(argv: list[str]) -> None:
     if len(argv) < 2:
         print("Usage: python clean_docx.py INPUT_DOCX")
@@ -742,6 +1042,7 @@ def main(argv: list[str]) -> None:
     clean_path         = base + "_clean"     + ext
     footnotes_path     = base + "_footnotes" + ext
     footnotes_txt_path = base + "_footnotes" + ".txt"
+    newterms_path      = base + "_newterms"  + ".txt"
 
     # Footnotes extracted from original (unmodified) source
     try:
@@ -759,6 +1060,17 @@ def main(argv: list[str]) -> None:
             print(f"Footnotes txt:  {footnotes_txt_path} ({n_txt} notes)")
     except Exception as e:
         print(f"Warning: could not export footnotes txt: {e}", file=sys.stderr)
+
+    # Scan for new terms (runs on original source before cleaning, to keep italic info)
+    try:
+        terms   = scan_new_terms(source_path)
+        n_terms = export_newterms_txt(
+            terms, newterms_path, source_name=os.path.basename(source_path)
+        )
+        n_cats = sum(1 for v in terms.values() if v)
+        print(f"New terms:      {newterms_path} ({n_terms} candidates, {n_cats} categories)")
+    except Exception as e:
+        print(f"Warning: could not scan new terms: {e}", file=sys.stderr)
 
     # Apply all pre-processing and save with tables intact
     try:

@@ -19,6 +19,7 @@ python clean_docx.py YourMonograph.docx
 Produces:
 - `YourMonograph_clean.docx` — place this in InDesign (tables intact, text cleaned)
 - `YourMonograph_footnotes.txt` — footnote key/text pairs for InsertFootnotes.jsx
+- `YourMonograph_newterms.txt` — candidate new terms to review before processing the monograph
 
 What it does automatically:
 - Marks superscript runs as `{{text}}` and native footnote refs as `{{fn:N}}`
@@ -26,7 +27,10 @@ What it does automatically:
 - Strips Word field codes and character-level overrides (preserves italics)
 - Cleans bullet characters (U+2022) and tilde operators (U+223C)
 - Infers InDesign paragraph styles from formatting heuristics (all-caps headings, bold paragraphs, table captions, table footnote markers)
-- Extracts merged description rows from table tops into `Table_Header` paragraphs
+- Extracts merged description rows from table tops into `Table_Heading` paragraphs
+- Scans for scientific names, gene names, protein names, event names, and regulatory abbreviations not in the known lists — emits `_newterms.txt` for review before proceeding
+
+**Review `_newterms.txt` before running InDesign scripts.** Confirmed new terms should be added to the known lists in `clean_docx.py` and to `latinTerms` / `specificFixes` in `CleanUp.jsx` / `TitleCaseHeadings.jsx` as appropriate.
 
 ---
 
@@ -41,16 +45,19 @@ Install by copying all `.jsx` files to your InDesign Scripts Panel folder (right
 - Converts the first row of each table to a header row
 - Sets row heights to "At Least" 3pt
 - Applies `Table_Span` to each table's container paragraph
+- Detects approval tables (≥10% of body cells in country columns contain "x") and applies `TStyle_Approvals`; applies `TStyle_Simple` to all other tables
+- Styles approval table header cells (`CStyle_HeaderRotatedLeft/Right`, `CStyle_Header_middle`), Crop and Event Name columns, "x" cells, and highlighted "x" cells; distributes country columns evenly
 - ⚠️ Must run **before** `CleanUp.jsx` (which re-applies `Char_Superscript` to cells)
 
 #### 2. `CleanUp.jsx`
 - Removes unnamed/blank imported character styles and replaces usages with `[None]`
-- Remaps imported Word paragraph styles → InDesign template styles (e.g., Normal → Body_Text, Heading 1 → Head_Section)
+- Remaps imported Word paragraph styles → InDesign template styles (e.g., Normal → Body_Text, Heading 1 → Head_Section, List Paragraph → Body_BulletL1)
 - Clears local formatting overrides (paragraph and character level)
 - Fixes double spaces, extra paragraph returns, and multiplication signs (`x` → `×`)
+- Corrects protein-name → gene-name casing when followed by the word "gene" (e.g., `Cry1Ab gene` → `cry1Ab gene`)
 - Converts `{{N}}` and `{{letter}}` markers → strips braces, applies `Char_Superscript`
 - Recovers italics on Latin/scientific terms (in vitro, in vivo, in situ, de novo, ex vivo, ad libitum, etc.) stripped by the override-clearing pass — applies the correct character style per paragraph weight context: `Char_Italic` (prose), `Char_Regular` (Table_FootNote, which is fully italic), `Char_SemiboldItalic` (subheadings), `Char_BoldItalic` (Head_Section). To add terms, edit the `latinTerms` array in the script.
-- ⚠️ Must run **before** `InsertFootnotes.jsx` — native InDesign footnotes created by InsertFootnotes cause InDesign's Text engine to crash when CleanUp runs doc-wide text operations
+- ⚠️ Must run **before** `InsertFootnotes.jsx` — native InDesign footnotes created by InsertFootnotes cause InDesign's text engine to crash when CleanUp runs doc-wide text operations
 
 #### 3. `InsertFootnotes.jsx`
 - Reads `_footnotes.txt` (select it when prompted)
@@ -78,22 +85,25 @@ Install by copying all `.jsx` files to your InDesign Scripts Panel folder (right
 ```
 Phase 1 — Word Prep
   └─ python clean_docx.py YourMonograph.docx
-       → YourMonograph_clean.docx
-       → YourMonograph_footnotes.txt
+       → YourMonograph_clean.docx       ← place this in InDesign
+       → YourMonograph_footnotes.txt    ← used by InsertFootnotes.jsx
+       → YourMonograph_newterms.txt     ← review before proceeding
+
+  Review _newterms.txt and update known lists / script arrays as needed.
 
 Phase 2 — InDesign (single column)
   ├─ Place YourMonograph_clean.docx (Shift+click for autoflow)
-  ├─ Run: 1. TableStyler.jsx
-  ├─ Run: 2. CleanUp.jsx
-  ├─ Run: 3. InsertFootnotes.jsx  (select _footnotes.txt when prompted)
+  ├─ Run: 1. TableStyler.jsx           (detects & styles all tables automatically)
+  ├─ Run: 2. CleanUp.jsx               (must be before InsertFootnotes)
+  ├─ Run: 3. InsertFootnotes.jsx       (select _footnotes.txt when prompted)
   ├─ Run: 4. TitleCaseHeadings.jsx
-  ├─ Manual italic recovery (journal names; Latin terms now automated via CleanUp.jsx)
-  └─ Run: FindDeleteEmptyFootnotes.jsx  (when ready to clean up red {{fn:N}} markers)
+  ├─ Manual italic recovery            (journal names only; Latin terms automated)
+  └─ Run: FindDeleteEmptyFootnotes.jsx (when ready to clean up red {{fn:N}} markers)
 
 Phase 3 — Two-column layout & final polish
-  ├─ Switch Master B to 2 columns
+  ├─ Switch to 2 columns: Cmd+A per spread → Cmd+B → 2 cols, 0.1667" gutter
+  │    (do this manually, spread by spread — script automation crashes InDesign)
   ├─ Adjust pagination (page/column breaks, widows/orphans)
-  ├─ Apply table styles (TStyle_Simple / TStyle_Approvals + cell/edge styles)
   └─ Final layout polish
 ```
 
@@ -109,13 +119,14 @@ indesignscripts/
 ├── InsertFootnotes.jsx              # InDesign footnote insertion (step 3)
 ├── TableStyler.jsx                  # InDesign table styling (step 1)
 ├── TitleCaseHeadings.jsx            # InDesign title case (step 4)
-├── deprecated_scripts/            # Old scripts kept for reference
+├── deprecated_scripts/              # Old scripts kept for reference
 └── docs/
     ├── AFSI_Monograph_InDesign_Template_Guide_v12.md  # Full template guide
     ├── AFSI_Monograph_Prep_Project_Instructions_Original.md
-    ├── Cry1Ab_FFS_original.docx   # Source monograph draft
+    ├── Cry1Ab_FFS_original.docx          # Source monograph draft
     ├── Cry1Ab_FFS_original_clean.docx
     ├── Cry1Ab_FFS_original_footnotes.docx
     ├── Cry1Ab_FFS_original_footnotes.txt
+    ├── Cry1Ab_FFS_original_newterms.txt
     └── ProteinMonograph_Template_original.indt
 ```

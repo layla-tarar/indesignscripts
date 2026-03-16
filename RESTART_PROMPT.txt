@@ -4,16 +4,21 @@ We're continuing work on the AFSI monograph InDesign prep scripts. The project i
 Please read HANDOFF_NOTES.md and README.md before we start, so you have the full context.
 
 Quick summary of what the project does:
-- clean_docx.py: Python script that pre-processes Word monograph drafts for InDesign placement. Converts superscripts to {{text}} markers, footnote refs to {{fn:N}}, repeat references (empty-body Word footnotes with customMarkFollows) to plain {{N}} superscripts. Outputs _clean.docx and _footnotes.txt.
-- TableStyler.jsx, CleanUp.jsx, InsertFootnotes.jsx, FindDeleteEmptyFootnotes.jsx, TitleCaseHeadings.jsx: InDesign ExtendScript scripts run in that order after placing _clean.docx.
+- clean_docx.py: Python script that pre-processes Word monograph drafts for InDesign placement. Converts superscripts to {{text}} markers, footnote refs to {{fn:N}}, repeat references to plain {{N}} superscripts. Outputs _clean.docx, _footnotes.txt, and _newterms.txt (candidate new terms to review before processing each monograph).
+- TableStyler.jsx: Resets table overrides, converts first row to header, applies Table_Span, auto-detects approval vs. simple tables and applies TStyle_Approvals/TStyle_Simple with full cell styling. Run first.
+- CleanUp.jsx: Remaps Word paragraph styles to InDesign styles, clears overrides, fixes text, restores superscripts, recovers Latin term italics. Run second (must be before InsertFootnotes).
+- InsertFootnotes.jsx: Replaces {{fn:N}} markers with native InDesign footnotes from _footnotes.txt. Run third.
+- TitleCaseHeadings.jsx: Applies APA 7th Title Case to all headings with term-specific fixes.
+- FindDeleteEmptyFootnotes.jsx: Interactive cleanup of any unmatched {{fn:N}} markers.
 
 The workflow is confirmed working for Cry1Ab through Phase 2.
 
 Two-column layout (Phase 3 Step 1) is done manually: Cmd+A per spread → Cmd+B → 2 columns, 0.1667" gutter. Script automation for this was attempted and abandoned — InDesign crashes during reflow regardless of approach.
 
-CleanUp.jsx now includes Latin term italic recovery (step 6): applies Char_Italic / Char_Regular / Char_SemiboldItalic / Char_BoldItalic to terms like in vitro, in vivo, in situ, de novo, ex vivo, ad libitum etc., scoped per paragraph style weight. Journal name italics still require manual recovery.
+CleanUp.jsx includes Latin term italic recovery (step 6): applies Char_Italic / Char_Regular / Char_SemiboldItalic / Char_BoldItalic to terms like in vitro, in vivo, in situ, de novo, ex vivo, ad libitum etc., scoped per paragraph style weight. Journal name italics still require manual recovery.
 
-Next session goal:
-1. Add a per-monograph term scanner to clean_docx.py — scan the .docx and emit a _newterms.txt report listing scientific names, gene names, protein names, event names, and regulatory body abbreviations not already in the known lists. Needed before processing Cry1Ac, EPSPS, PAT/BAR.
+Next session goals:
+1. Auto-detect reference list paragraphs and apply Ref_Entry paragraph style — either in clean_docx.py (heuristic on hanging-indent or position relative to a "References" heading) or in CleanUp.jsx.
+2. Journal name italic recovery — scan the original .docx for frequently italicized multi-word Title Case phrases not already in the Latin terms list, and add them to a GREP recovery pass in CleanUp.jsx.
 
 Let me know what you'd like to work on.

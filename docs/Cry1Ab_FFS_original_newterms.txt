@@ -1,0 +1,34 @@
+# New term candidates — Cry1Ab_FFS_original.docx
+# Review each section.  Confirmed terms should be added to the
+# known lists in clean_docx.py, and to latinTerms / specificFixes
+# in CleanUp.jsx / TitleCaseHeadings.jsx as appropriate.
+
+=== Scientific Names ===
+  B. thuringienesis
+  Vigna unguiculata
+
+=== Gene Names ===
+  cp4
+  cry1Fa
+
+=== Protein Names ===
+  Cry1A
+  Cry1Aa
+  Cry1Aa1
+  Cry1Aa2
+  Cry1B
+  Cry1Bb
+  Cry2Aa
+
+=== Event Names ===
+  Bt10
+  MON818
+  MON88017
+  MON88701
+
+=== Regulatory Abbreviations ===
+  BCH
+  CSIR
+  CTC
+  FZANS
+  RCC

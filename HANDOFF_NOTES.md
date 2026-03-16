@@ -2,23 +2,41 @@
 
 ## What Was Done This Session
 
-### Latin term italic recovery added to CleanUp.jsx (step 6)
+### Per-monograph term scanner added to clean_docx.py
 
-After the override-clearing pass strips all Word character formatting, a new step
-re-applies italic to standard Latin/scientific terms. Four weight-context groups:
+`clean_docx.py` now emits a third output: `_newterms.txt`. It scans the original
+.docx (before cleaning, so italic markup is still present) and reports candidate
+terms not in the known lists, grouped by category:
 
-| Character style | Paragraph styles |
+| Category | Detection method |
 |---|---|
-| `Char_Italic` | Body_Text, Body_BulletL1, Body_Footnote, Table_Heading |
-| `Char_Regular` | Table_FootNote (fully italic base — terms go roman to contrast) |
-| `Char_SemiboldItalic` | Head_SubsectionNumbered, Head_SubsectionUnnumbered, Head_SubSubSectionUnnumbered |
-| `Char_BoldItalic` | Head_Section |
+| Scientific names | Binomial patterns in italic runs only |
+| Gene names | Lowercase token patterns (e.g. `cry1Fa`) in italic runs |
+| Protein names | Cry/Vip patterns in full text |
+| Event names | Known-prefix patterns (MON, NK, MIR, DAS-XXXXX-X, etc.) |
+| Regulatory abbreviations | All-caps 3–6 char tokens, ≥2 occurrences in body text |
 
-Terms covered: in vitro, in vivo, in situ, de novo, ex vivo, ad libitum, in planta,
-in silico, sensu stricto, sensu lato, et al., per se, in utero, in ovo.
+Known lists live at the top of the scanner section in `clean_docx.py`. Add
+confirmed terms there after reviewing `_newterms.txt`. Terms that need italic
+recovery go in `latinTerms` in CleanUp.jsx; title-case fixes go in `specificFixes`
+in TitleCaseHeadings.jsx.
 
-To add more terms: edit the `latinTerms` array in CleanUp.jsx step 6.
-Journal name italics still require manual recovery.
+### Automation audit completed
+
+Reviewed all existing scripts against the template guide and project instructions.
+Key findings:
+
+- **TableStyler.jsx already handles full table styling** — detects approval vs.
+  simple tables automatically, applies TStyle_Approvals/TStyle_Simple, styles all
+  header cells, Crop/Event Name columns, "x" cells, and highlighted cells. Bottom-row
+  style is handled by the table style definition itself. No manual table styling needed.
+- **Tables stay in `_clean.docx`** — they are not removed during pre-processing.
+  No `[INSERT TABLE X HERE]` markers are needed.
+- **Heading style remapping is largely automated** — CleanUp.jsx remaps all standard
+  Word heading styles; clean_docx.py heuristically assigns Head_Section, Head_CropName,
+  Head_SubsectionUnnumbered, Table_Heading, Table_FootNote from body formatting.
+- **Unmatched footnote markers are already flagged** — InsertFootnotes.jsx highlights
+  red with Char_UnmatchedMarker; FindDeleteEmptyFootnotes.jsx handles cleanup.
 
 ---
 
@@ -28,21 +46,23 @@ Journal name italics still require manual recovery.
 Phase 1 — python3 clean_docx.py YourMonograph.docx
   → YourMonograph_clean.docx
   → YourMonograph_footnotes.txt
+  → YourMonograph_newterms.txt     ← review before proceeding
 
 Phase 2 — InDesign (single column)
   1. Verify Master B is 1 column
   2. Place _clean.docx (Shift+click for autoflow)
-  3. TableStyler.jsx
-  4. CleanUp.jsx          ← MUST come before InsertFootnotes
-  5. InsertFootnotes.jsx  (select _footnotes.txt when prompted)
+  3. TableStyler.jsx               ← detects & styles all tables automatically
+  4. CleanUp.jsx                   ← MUST come before InsertFootnotes
+  5. InsertFootnotes.jsx           (select _footnotes.txt when prompted)
   6. TitleCaseHeadings.jsx
-  7. FindDeleteEmptyFootnotes.jsx  (when ready to clean up red markers)
+  7. Manual italic recovery        (journal names only; Latin terms automated)
+  8. FindDeleteEmptyFootnotes.jsx  (when ready to clean up red markers)
 
-Phase 3 — Two-column layout & tables (NOT YET DONE for Cry1Ab)
+Phase 3 — Two-column layout & final polish (NOT YET DONE for Cry1Ab)
   1. Switch to 2 columns: Cmd+A per spread → Cmd+B → 2 cols, 0.1667" gutter
+     (manual, spread by spread — script automation crashes InDesign on reflow)
   2. Pagination pass (breaks, widows/orphans)
-  3. Apply table styles (TStyle_Simple / TStyle_Approvals + cell/edge styles)
-  4. Final layout polish
+  3. Final layout polish
 ```
 
 **Critical order constraint:** CleanUp must run **before** InsertFootnotes.
@@ -52,16 +72,20 @@ Phase 3 — Two-column layout & tables (NOT YET DONE for Cry1Ab)
 ## Known Remaining Issues / Next Steps
 
 ### Immediate — automation improvements
-1. **Per-monograph term scanner** — extend `clean_docx.py` to emit a `_newterms.txt`
-   report of scientific names, gene names, protein names, event names, and regulatory
-   body abbreviations found in the document that are not in the known lists.
-   Needed before processing Cry1Ac, EPSPS, PAT/BAR.
+
+1. **Ref_Entry style detection** — reference list paragraphs are not yet
+   auto-assigned the `Ref_Entry` paragraph style. Could be done in clean_docx.py
+   (heuristic: hanging-indent paragraphs near the end of the document, or paragraphs
+   following a "References" heading) or in CleanUp.jsx.
+
+2. **Journal name italic recovery** — the only remaining manual italic task after
+   CleanUp.jsx runs. A future pass could scan the original .docx for frequently
+   italicized multi-word Title Case phrases not in the Latin terms list and add them
+   to a GREP-driven recovery pass in CleanUp.jsx.
 
 ### Layout & content (Cry1Ab Phase 3 not started)
 - **Two-column layout** — manual switch not yet done
-- **Table styling** — TStyle_Simple / TStyle_Approvals not yet applied
 - **Italic recovery** — journal names still need manual italic re-application
-- **TitleCaseHeadings `specificFixes` array** — add new terms found during layout review
 
 ### Other monographs
 - Cry1Ac, EPSPS, PAT/BAR not yet processed
@@ -72,11 +96,12 @@ Phase 3 — Two-column layout & tables (NOT YET DONE for Cry1Ab)
 
 | File | Status |
 |---|---|
-| `clean_docx.py` | Working correctly |
-| `CleanUp.jsx` | Updated — Latin italic recovery added (step 6) |
+| `clean_docx.py` | Updated — per-monograph term scanner added (_newterms.txt output) |
+| `CleanUp.jsx` | Unchanged — Latin italic recovery still in step 6 |
 | `InsertFootnotes.jsx` | Unchanged |
 | `FindDeleteEmptyFootnotes.jsx` | Unchanged |
 | `TableStyler.jsx` | Unchanged |
 | `TitleCaseHeadings.jsx` | Unchanged |
 | `docs/Cry1Ab_FFS_original_clean.docx` | Ready for InDesign placement |
 | `docs/Cry1Ab_FFS_original_footnotes.txt` | 4 entries (fn:1–fn:4) |
+| `docs/Cry1Ab_FFS_original_newterms.txt` | 20 candidates across 5 categories |
